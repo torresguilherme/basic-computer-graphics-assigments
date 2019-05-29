@@ -2,6 +2,9 @@ import argparse
 import numpy as np
 import math
 from threading import Thread, ThreadError
+import pdb
+
+PIXEL_SIZE = 0.005
 
 #######################################
 ### MATH PRIMITIVES
@@ -17,6 +20,9 @@ class Vec3:
             self.x = 0
             self.y = 0
             self.z = 0
+    
+    def __str__(self):
+        return '(' + str(self.x) + ',' + str(self.y) + ',' + str(self.z) + ')'
     
     def __getitem__(self, key):
         if key is 0:
@@ -76,10 +82,13 @@ class Ray:
     def __init__(self, *args):
         if len(args) == 2:
             self.start = args[0]
-            self.direction = args[1]
+            self.direction = args[1].normalize()
         else:
             self.start = Vec3()
             self.direction = Vec3()
+    
+    def __str__(self):
+        return 'Start: ' + str(self.start) + ' Direction: ' + str(self.direction)
 
     def point_at_t(self, t):
         return self.start + self.direction * t
@@ -98,23 +107,30 @@ class Sphere:
 #######################################
 
 def trace_rays(shapes, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
-    ray = Ray(camera_eye, Vec3(
-        0, 0, 0
-    ))
+    ipc = camera_eye + camera_front * focal_dist
+    # ray = eye + t * (pixel_pos - eye)
+    ray = Ray(camera_eye, (ipc - camera_eye) + (camera_right * (j - width/2) * PIXEL_SIZE) + (camera_up * (height/2 - i) * PIXEL_SIZE))
 
     params = []
     for s in shapes:
         params.append(intersects(ray, s))
     
     for p in params:
-        if p > 0:
-            color = Vec3(1, 0, 0)
-            return [color[0], color[1], color[2]]
+        if p >= focal_dist:
+            return [255, 255, 0]
     
     return [0, 0, 0]
 
 def intersects(ray, shape):
-    return -1
+    oc = ray.start - shape.center
+    a = ray.direction.dot(ray.direction)
+    b = 2 * oc.dot(ray.direction)
+    c = oc.dot(oc) - shape.radius * shape.radius
+    discriminant = b * b - 4 * a * c
+    if discriminant >= 0:
+        return 10
+    else:
+        return -1
 
 #######################################
 ### MAIN
@@ -140,22 +156,23 @@ def main():
     
     # camera parameters
     camera_eye = Vec3()
-    focal_dist = 1
+    focal_dist = 4
     camera_target = Vec3(0, 0, 2)
     camera_up = Vec3(0, 1, 0)
-    camera_right = (camera_target - camera_eye).cross(camera_up).normalize()
-    camera_front = camera_up.cross(camera_right)
+    camera_right = camera_up.cross(camera_target - camera_eye).normalize()
+    camera_up = camera_right.cross((camera_target - camera_eye).normalize())
+    camera_front = (camera_target - camera_eye).normalize()
 
     # get shapes
     shapes = []
-    shapes.append(Sphere(Vec3(0, 0, 2), 1))
+    shapes.append(Sphere(Vec3(0, 0, 5), 1))
 
     # init pixel array
     pixel_array = np.zeros((width, height, 3), dtype=np.uint8)
     
     # calculate rays
-    for i in range(len(pixel_array)):
-        for j in range(len(pixel_array[i])):
+    for i in range(width):
+        for j in range(height):
             pixel_array[i][j] = trace_rays(shapes, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
 
     # output img
@@ -165,7 +182,6 @@ def main():
             for pixel in row:
                 for channel in pixel:
                     f.write(str(channel) + ' ')
-                f.write(('\n'))
             f.write('\n')
 
 if __name__ == '__main__':
