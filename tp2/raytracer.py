@@ -2,9 +2,10 @@ import argparse
 import numpy as np
 import math
 from threading import Thread, ThreadError
-import pdb
 
-PIXEL_SIZE = 0.005
+PIXEL_SIZE = 0.01
+DISTRIBUTED_RAYS = 9
+VISION_RANGE = 2 ** 63 - 1
 
 #######################################
 ### MATH PRIMITIVES
@@ -61,6 +62,15 @@ class Vec3:
     
     def __imul__(self, scalar):
         return self * scalar
+
+    def __div__(self, scalar):
+        return Vec3(self.x / scalar, self.y / scalar, self.z / scalar)
+    
+    def __idiv__(self, scalar):
+        return self / scalar
+    
+    def array(self):
+        return [self.x, self.y, self.z]
     
     def dot(self, other):
         return self.x * other.x + self.y * other.y + self.z * other.z
@@ -97,10 +107,30 @@ class Ray:
 ### SHAPE PRIMITIVES
 #######################################
 
+class Material:
+    def __init__(self, **kwargs):
+        self.type = kwargs.get('type')
+        self.albedo = kwargs.get('albedo')
+        if self.type == 'glass':
+            # cover glass materials
+            pass
+        elif self.type == 'metal':
+            # cover metal material parameters
+            pass
+        elif self.type == 'phong':
+            # cover phong material parameters
+            pass
+        else:
+            self.type = 'lambert'
+    
+    def __str__(self):
+        return 'Type: ' + self.type + ' Albedo: ' +  str(self.albedo)
+
 class Sphere:
-    def __init__(self, center, radius):
+    def __init__(self, center, radius, material):
         self.center = center
         self.radius = radius
+        self.material = material
 
 #######################################
 ### RAY INTERSECT HANDLING
@@ -108,29 +138,55 @@ class Sphere:
 
 def trace_rays(shapes, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
     ipc = camera_eye + camera_front * focal_dist
-    # ray = eye + t * (pixel_pos - eye)
-    ray = Ray(camera_eye, (ipc - camera_eye) + (camera_right * (j - width/2) * PIXEL_SIZE) + (camera_up * (height/2 - i) * PIXEL_SIZE))
+    colors = []
+    for k in range(DISTRIBUTED_RAYS):
+        sampling_offset = (k % math.sqrt(DISTRIBUTED_RAYS) / math.sqrt(DISTRIBUTED_RAYS), \
+                            k / math.sqrt(DISTRIBUTED_RAYS) / math.sqrt(DISTRIBUTED_RAYS))
+        # ray = eye + t * (pixel_pos - eye)
+        ray = Ray(camera_eye, (ipc - camera_eye) + (camera_right * (j - width/2 + sampling_offset[0]) * PIXEL_SIZE) \
+            + (camera_up * (height/2 - i + sampling_offset[1]) * PIXEL_SIZE))
+        
+        params = []
+        for s in shapes:
+            params.append(intersects(ray, s))
+        
+        min_t = VISION_RANGE
+        color = Vec3(0, 0, 0)
+        for p in params:
+            if p[0] >= focal_dist and p[0] < min_t:
+                color = p[1]
+                min_t = p[0]
+        
+        colors.append(color)
 
-    params = []
-    for s in shapes:
-        params.append(intersects(ray, s))
-    
-    for p in params:
-        if p >= focal_dist:
-            return [255, 255, 0]
-    
-    return [0, 0, 0]
+    # retorna media das cores
+    average = [0, 0, 0]
+    for k in range(DISTRIBUTED_RAYS):
+        for l in range(3):
+            average[l] += colors[k][l]
+    for k in range(3):
+        average[k] /= DISTRIBUTED_RAYS
+    return average
 
 def intersects(ray, shape):
-    oc = ray.start - shape.center
-    a = ray.direction.dot(ray.direction)
-    b = 2 * oc.dot(ray.direction)
-    c = oc.dot(oc) - shape.radius * shape.radius
-    discriminant = b * b - 4 * a * c
-    if discriminant >= 0:
-        return 10
-    else:
-        return -1
+    # intersect with sphere
+    try:
+        oc = ray.start - shape.center
+        a = ray.direction.dot(ray.direction)
+        b = 2 * oc.dot(ray.direction)
+        c = oc.dot(oc) - shape.radius * shape.radius
+        discriminant = b * b - 4 * a * c
+        if discriminant >= 0:
+            solution = (-b - math.sqrt(discriminant))/ (2 * a)
+            return solution, shape.material.albedo
+        else:
+            return -1, Vec3(0, 0, 0)
+    except AttributeError:
+        pass
+    
+    # intersect with triangle
+
+    return -1, Vec3(0, 0, 0)
 
 #######################################
 ### MAIN
@@ -156,7 +212,7 @@ def main():
     
     # camera parameters
     camera_eye = Vec3()
-    focal_dist = 4
+    focal_dist = 2
     camera_target = Vec3(0, 0, 2)
     camera_up = Vec3(0, 1, 0)
     camera_right = camera_up.cross(camera_target - camera_eye).normalize()
@@ -165,14 +221,17 @@ def main():
 
     # get shapes
     shapes = []
-    shapes.append(Sphere(Vec3(0, 0, 5), 1))
+    ground_material = Material(type='lambert', albedo=Vec3(0, 255, 150))
+    ball_material = Material(type='lambert', albedo=Vec3(255, 255, 0))
+    shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
+    shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
 
     # init pixel array
-    pixel_array = np.zeros((width, height, 3), dtype=np.uint8)
+    pixel_array = np.zeros((height, width, 3), dtype=np.uint8)
     
     # calculate rays
-    for i in range(width):
-        for j in range(height):
+    for i in range(height):
+        for j in range(width):
             pixel_array[i][j] = trace_rays(shapes, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
 
     # output img
