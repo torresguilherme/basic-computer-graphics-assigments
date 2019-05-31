@@ -1,11 +1,16 @@
 import argparse
 import numpy as np
 import math
-from threading import Thread, ThreadError
+import itertools
+import time
+import multiprocessing
+from multiprocessing.dummy import Pool
 
 PIXEL_SIZE = 0.01
-DISTRIBUTED_RAYS = 9
+DISTRIBUTED_RAYS = 4
 VISION_RANGE = 2 ** 63 - 1
+CPUS = multiprocessing.cpu_count()
+OBJ_NEAR = 0.0005
 
 #######################################
 ### MATH PRIMITIVES
@@ -82,6 +87,17 @@ class Vec3:
             self.x * other.y - self.y * other.x
         )
     
+    def reflect(self, normal):
+        return self - 2 * self.dot(normal) * normal
+    
+    def refract(self, normal, ni_over_nt):
+        unit_v = self.normalize()
+        cosine = unit_v.dot(normal)
+        discriminant = 1 - ni_over_nt * ni_over_nt * (1 - cosine * cosine)
+        if(discriminant >= 0):
+            return ni_over_nt * (unit_v - normal * cosine) - normal * math.sqrt(discriminant)
+        return Vec3(0, 0, 0)
+
     def lenght(self):
         return math.sqrt(self.dot(self))
     
@@ -107,21 +123,32 @@ class Ray:
 ### SHAPE PRIMITIVES
 #######################################
 
+class PointLight:
+    def __init__(self, position, color):
+        self.position = position
+        self.color = color
+    
+    def __str__(self):
+        return 'Light position: ' + str(self.position) + ' Color: ' + str(self.color)
+
 class Material:
     def __init__(self, **kwargs):
         self.type = kwargs.get('type')
         self.albedo = kwargs.get('albedo')
-        if self.type == 'glass':
-            # cover glass materials
-            pass
-        elif self.type == 'metal':
-            # cover metal material parameters
-            pass
+        if self.type == 'dielectric':
+            # cover glass/dielectric materials
+            self.k_refraction = kwargs.get('k_refraction')
+        elif self.type == 'reflective':
+            # cover metal/reflective material parameters
+            self.k_reflectance = kwargs.get('k_reflectance')
+            self.fuzz = kwargs.get('fuzz')
         elif self.type == 'phong':
             # cover phong material parameters
-            pass
+            self.shading = kwargs.get('shading')
+            self.k_specular = kwargs.get('k_specular')
         else:
             self.type = 'lambert'
+            self.k_diffuse = kwargs.get('k_diffuse')
     
     def __str__(self):
         return 'Type: ' + self.type + ' Albedo: ' +  str(self.albedo)
@@ -136,7 +163,7 @@ class Sphere:
 ### RAY INTERSECT HANDLING
 #######################################
 
-def trace_rays(shapes, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
+def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
     ipc = camera_eye + camera_front * focal_dist
     colors = []
     for k in range(DISTRIBUTED_RAYS):
@@ -178,7 +205,7 @@ def intersects(ray, shape):
         discriminant = b * b - 4 * a * c
         if discriminant >= 0:
             solution = (-b - math.sqrt(discriminant))/ (2 * a)
-            return solution, shape.material.albedo
+            return solution, shape.material.albedo * shape.material.k_diffuse
         else:
             return -1, Vec3(0, 0, 0)
     except AttributeError:
@@ -221,18 +248,32 @@ def main():
 
     # get shapes
     shapes = []
-    ground_material = Material(type='lambert', albedo=Vec3(0, 255, 150))
-    ball_material = Material(type='lambert', albedo=Vec3(255, 255, 0))
+    ground_material = Material(type='lambert', albedo=Vec3(0, 255, 150), k_diffuse=0.8)
+    ball_material = Material(type='lambert', albedo=Vec3(255, 255, 0), k_diffuse=0.4)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
     shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
+
+    # get lights
+    points_lights = []
 
     # init pixel array
     pixel_array = np.zeros((height, width, 3), dtype=np.uint8)
     
-    # calculate rays
+    # render image
+    start_time = time.time()
+
     for i in range(height):
         for j in range(width):
-            pixel_array[i][j] = trace_rays(shapes, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
+            pixel_array[i][j] = trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
+
+    #pool = Pool(CPUS)
+    #results = pool.starmap(trace_rays, [itertools.repeat(shapes), range(width), range(height), \
+    #    itertools.repeat(width), itertools.repeat(height), \
+    #    itertools.repeat(camera_eye), itertools.repeat(camera_up), itertools.repeat(camera_right), \
+    #    itertools.repeat(camera_front), itertools.repeat(focal_dist)])
+
+    end_time = time.time() - start_time
+    print('Imagem renderizada em ' + str(end_time) + ' segundos')
 
     # output img
     with open(ouf, 'w') as f:
