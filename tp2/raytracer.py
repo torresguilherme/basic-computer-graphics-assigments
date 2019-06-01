@@ -4,6 +4,7 @@ import math
 import itertools
 import time
 import multiprocessing
+import statistics
 from multiprocessing.dummy import Pool
 
 PIXEL_SIZE = 0.01
@@ -68,10 +69,10 @@ class Vec3:
     def __imul__(self, scalar):
         return self * scalar
 
-    def __div__(self, scalar):
+    def __truediv__(self, scalar):
         return Vec3(self.x / scalar, self.y / scalar, self.z / scalar)
     
-    def __idiv__(self, scalar):
+    def __trueidiv__(self, scalar):
         return self / scalar
     
     def array(self):
@@ -120,7 +121,7 @@ class Ray:
         return self.start + self.direction * t
 
 #######################################
-### SHAPE PRIMITIVES
+### ILLUMINATION PRIMITIVES
 #######################################
 
 class PointLight:
@@ -153,11 +154,18 @@ class Material:
     def __str__(self):
         return 'Type: ' + self.type + ' Albedo: ' +  str(self.albedo)
 
+#######################################
+### SHAPE PRIMITIVES
+#######################################
+
 class Sphere:
     def __init__(self, center, radius, material):
         self.center = center
         self.radius = radius
         self.material = material
+    
+    def normal(self, point):
+        return (point - self.center).normalize() 
 
 #######################################
 ### RAY INTERSECT HANDLING
@@ -184,6 +192,11 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
                 color = p[1]
                 min_t = p[0]
         
+        if color != Vec3(0, 0, 0):
+            occlusions = []
+            for light in point_lights:
+                occlusions.append(occlusion(ray, min_t, shapes, light))
+        color *= statistics.mean(occlusions)
         colors.append(color)
 
     # retorna media das cores
@@ -214,6 +227,16 @@ def intersects(ray, shape):
     # intersect with triangle
 
     return -1, Vec3(0, 0, 0)
+
+def occlusion(ray, point_of_intersection, shapes, light):
+    k_occlusion = 1
+    ray_to_light = Ray(ray.point_at_t(point_of_intersection), light.position - ray.point_at_t(point_of_intersection))
+    for shape in shapes:
+        if intersects(ray_to_light, shape)[0] > OBJ_NEAR:
+            k_occlusion = 0
+        else:
+            k_occlusion = max(0.0, 1+ray_to_light.direction.dot(ray.direction))
+    return k_occlusion
 
 #######################################
 ### MAIN
@@ -249,12 +272,12 @@ def main():
     # get shapes
     shapes = []
     ground_material = Material(type='lambert', albedo=Vec3(0, 255, 150), k_diffuse=0.8)
-    ball_material = Material(type='lambert', albedo=Vec3(255, 255, 0), k_diffuse=0.4)
+    ball_material = Material(type='lambert', albedo=Vec3(255, 255, 0), k_diffuse=0.9)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
     shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
 
     # get lights
-    points_lights = []
+    point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255)), PointLight(Vec3(-3, 3, 3), Vec3(255, 255, 255))]
 
     # init pixel array
     pixel_array = np.zeros((height, width, 3), dtype=np.uint8)
