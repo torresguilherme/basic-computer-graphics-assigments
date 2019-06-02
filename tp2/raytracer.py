@@ -3,14 +3,14 @@ import numpy as np
 import math
 import itertools
 import time
+import threading
 import multiprocessing
 import statistics
-from multiprocessing.dummy import Pool
 
 PIXEL_SIZE = 0.01
 DISTRIBUTED_RAYS = 4
 VISION_RANGE = 2 ** 63 - 1
-CPUS = multiprocessing.cpu_count()
+CPUS = multiprocessing.cpu_count() * 2
 OBJ_NEAR = 0.0005
 
 #######################################
@@ -171,6 +171,12 @@ class Sphere:
 ### RAY INTERSECT HANDLING
 #######################################
 
+def trace_rays_in_row(shapes, point_lights, i, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist, array):
+    for j in range(width):
+        result = trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
+        for k in range(3):
+            array[i * width * 3 + j * 3 + k] = math.floor(result[k])
+
 def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
     ipc = camera_eye + camera_front * focal_dist
     colors = []
@@ -278,34 +284,39 @@ def main():
 
     # get lights
     point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255)), PointLight(Vec3(-3, 3, 3), Vec3(255, 255, 255))]
-
-    # init pixel array
-    pixel_array = np.zeros((height, width, 3), dtype=np.uint8)
     
     # render image
     start_time = time.time()
+    array = multiprocessing.Array('i', height * width * 3, lock=False)
 
+    processes = [None] * CPUS
+    for i in range(0, height, CPUS):
+        for k in range(CPUS):
+            if i + k < height:
+                processes[k] = multiprocessing.Process(target=trace_rays_in_row, \
+                    args=(shapes, point_lights, i + k, width, height, camera_eye, \
+                    camera_up, camera_right, camera_front, focal_dist, array))
+                processes[k].start()
+        
+        for p in processes:
+            p.join()
+
+    '''
     for i in range(height):
         for j in range(width):
-            pixel_array[i][j] = trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
-
-    #pool = Pool(CPUS)
-    #results = pool.starmap(trace_rays, [itertools.repeat(shapes), range(width), range(height), \
-    #    itertools.repeat(width), itertools.repeat(height), \
-    #    itertools.repeat(camera_eye), itertools.repeat(camera_up), itertools.repeat(camera_right), \
-    #    itertools.repeat(camera_front), itertools.repeat(focal_dist)])
-
+            trace_rays(shapes, point_lights, i, j, width, height, \
+                        camera_eye, camera_up, camera_right, camera_front, focal_dist, pixel_array[i][j])
+    '''
     end_time = time.time() - start_time
     print('Imagem renderizada em ' + str(end_time) + ' segundos')
 
     # output img
     with open(ouf, 'w') as f:
         f.write('P3\n' + str(width) + ' ' + str(height) + '\n255\n')
-        for row in pixel_array:
-            for pixel in row:
-                for channel in pixel:
-                    f.write(str(channel) + ' ')
-            f.write('\n')
+        for byte in array:
+            f.write(str(byte) + ' ')
+
+    return 0
 
 if __name__ == '__main__':
     main()
