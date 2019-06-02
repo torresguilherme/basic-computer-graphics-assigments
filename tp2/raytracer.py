@@ -1,11 +1,10 @@
 import argparse
-import numpy as np
 import math
-import itertools
 import time
-import threading
 import multiprocessing
 import statistics
+import pdb
+import random
 
 PIXEL_SIZE = 0.01
 DISTRIBUTED_RAYS = 4
@@ -29,7 +28,7 @@ class Vec3:
             self.z = 0
     
     def __str__(self):
-        return '(' + str(self.x) + ',' + str(self.y) + ',' + str(self.z) + ')'
+        return '(' + str(self.x) + ', ' + str(self.y) + ', ' + str(self.z) + ')'
     
     def __getitem__(self, key):
         if key is 0:
@@ -89,21 +88,25 @@ class Vec3:
         )
     
     def reflect(self, normal):
-        return self - 2 * self.dot(normal) * normal
+        return self - (normal * 2 * self.dot(normal))
     
     def refract(self, normal, ni_over_nt):
         unit_v = self.normalize()
         cosine = unit_v.dot(normal)
         discriminant = 1 - ni_over_nt * ni_over_nt * (1 - cosine * cosine)
         if(discriminant >= 0):
-            return ni_over_nt * (unit_v - normal * cosine) - normal * math.sqrt(discriminant)
-        return Vec3(0, 0, 0)
+            refracted_vec = (unit_v - normal * cosine) * ni_over_nt - normal * math.sqrt(discriminant)
+            return refracted_vec
+        return self.reflect(normal)
 
     def lenght(self):
         return math.sqrt(self.dot(self))
     
     def normalize(self):
-        return Vec3(self.x / self.lenght(), self.y / self.lenght(), self.z / self.lenght())
+        try:
+            return Vec3(self.x / self.lenght(), self.y / self.lenght(), self.z / self.lenght())
+        except ZeroDivisionError:
+            return Vec3()
 
 class Ray:
     def __init__(self, *args):
@@ -139,6 +142,7 @@ class Material:
         if self.type == 'dielectric':
             # cover glass/dielectric materials
             self.k_refraction = kwargs.get('k_refraction')
+            self.k_attenuation = kwargs.get('k_attenuation')
         elif self.type == 'reflective':
             # cover metal/reflective material parameters
             self.k_reflectance = kwargs.get('k_reflectance')
@@ -163,6 +167,9 @@ class Sphere:
         self.center = center
         self.radius = radius
         self.material = material
+    
+    def __str__(self):
+        return 'Type of shape: sphere. Center: ' + str(self.center) + ' Radius: ' + str(self.radius) + '\nMaterial:\n\t' + str(self.material)
     
     def normal(self, point):
         return (point - self.center).normalize() 
@@ -189,20 +196,23 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
         
         params = []
         for s in shapes:
-            params.append(intersects(ray, s))
+            params.append(intersects(ray, s, shapes))
         
         min_t = VISION_RANGE
         color = Vec3(0, 0, 0)
+        shape = None
         for p in params:
-            if p[0] >= focal_dist and p[0] < min_t:
+            if p[0] >= OBJ_NEAR and p[0] < min_t:
                 color = p[1]
                 min_t = p[0]
-        
+                shape = p[2]
+
         if color != Vec3(0, 0, 0):
+            other_shapes = [x for x in shapes if x != shape]
             occlusions = []
             for light in point_lights:
-                occlusions.append(occlusion(ray, min_t, shapes, light))
-        color *= statistics.mean(occlusions)
+                occlusions.append(occlusion(ray, min_t, other_shapes, light))
+            color *= statistics.mean(occlusions)
         colors.append(color)
 
     # retorna media das cores
@@ -214,7 +224,7 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
         average[k] /= DISTRIBUTED_RAYS
     return average
 
-def intersects(ray, shape):
+def intersects(ray, shape, other_shapes, occlusion=False):
     # intersect with sphere
     try:
         oc = ray.start - shape.center
@@ -222,27 +232,84 @@ def intersects(ray, shape):
         b = 2 * oc.dot(ray.direction)
         c = oc.dot(oc) - shape.radius * shape.radius
         discriminant = b * b - 4 * a * c
-        if discriminant >= 0:
-            solution = (-b - math.sqrt(discriminant))/ (2 * a)
-            return solution, shape.material.albedo * shape.material.k_diffuse
+        if discriminant > OBJ_NEAR:
+            sqrt = math.sqrt
+            s1 = (-b - sqrt(discriminant))/ (2 * a)
+            s2 = (-b + sqrt(discriminant))/ (2 * a)
+            solution = min(s1, s2)
+            #solution = (-b - sqrt(discriminant))/ (2 * a)
+            if occlusion:
+                return solution
+            try:
+                shape.material.k_diffuse
+                # cover lambertian materials
+                return solution, shape.material.albedo * shape.material.k_diffuse, shape
+            except AttributeError:
+                pass
+            try:
+                shape.material.k_reflectance
+                # cover reflective materials
+                reflected_ray = Ray(ray.point_at_t(solution),
+                    ray.direction.reflect(shape.normal(ray.point_at_t(solution))) \
+                    + Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
+                hits = []
+                other_shapes_real = [x for x in other_shapes if x != shape]
+                for s in other_shapes_real:
+                    reflected_intersection = intersects(reflected_ray, s, other_shapes_real)
+                    if reflected_intersection[0] > OBJ_NEAR:
+                        hits.append(reflected_intersection)
+                hits.sort(key=lambda val: val[0])
+                try:
+                    return solution, hits[0][1] * shape.material.k_reflectance + \
+                            shape.material.albedo * (1 - shape.material.k_reflectance), shape
+                except IndexError:
+                    return solution, Vec3() * shape.material.k_reflectance + \
+                            shape.material.albedo * (1 - shape.material.k_reflectance), shape
+            except AttributeError:
+                pass
+            try:
+                shape.material.k_attenuation
+                # cover dielectric materials
+                refracted_ray = Ray(ray.point_at_t(solution),
+                    ray.direction.refract(shape.normal(ray.point_at_t(solution)), shape.material.k_refraction))
+                    #+ Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
+                hits = []
+                other_shapes_real = [x for x in other_shapes if x != shape]
+                for s in other_shapes_real:
+                    refracted_intersection = intersects(refracted_ray, s, other_shapes_real)
+                    if refracted_intersection[0] > OBJ_NEAR:
+                        hits.append(refracted_intersection)
+                hits.sort(key=lambda val: val[0])
+                try:
+                    return solution, hits[0][1] * shape.material.k_attenuation + \
+                            shape.material.albedo * (1 - shape.material.k_attenuation), shape
+                except IndexError:
+                    return solution, Vec3() * shape.material.k_attenuation + \
+                            shape.material.albedo * (1 - shape.material.k_attenuation), shape
+            except AttributeError:
+                pass
         else:
-            return -1, Vec3(0, 0, 0)
+            if occlusion:
+                return -1
+            return -1, Vec3(), shape
     except AttributeError:
         pass
     
     # intersect with triangle
 
+    if occlusion:
+        return -1
     return -1, Vec3(0, 0, 0)
 
 def occlusion(ray, point_of_intersection, shapes, light):
-    k_occlusion = 1
+    k_occlusions = []
     ray_to_light = Ray(ray.point_at_t(point_of_intersection), light.position - ray.point_at_t(point_of_intersection))
     for shape in shapes:
-        if intersects(ray_to_light, shape)[0] > OBJ_NEAR:
-            k_occlusion = 0
+        if intersects(ray_to_light, shape, shapes, occlusion=True) > OBJ_NEAR:
+            k_occlusions.append(0)
         else:
-            k_occlusion = max(0.0, 1+ray_to_light.direction.dot(ray.direction))
-    return k_occlusion
+            k_occlusions.append(1+ray_to_light.direction.dot(ray.direction))
+    return statistics.mean(k_occlusions)
 
 #######################################
 ### MAIN
@@ -278,9 +345,15 @@ def main():
     # get shapes
     shapes = []
     ground_material = Material(type='lambert', albedo=Vec3(0, 255, 150), k_diffuse=0.8)
-    ball_material = Material(type='lambert', albedo=Vec3(255, 255, 0), k_diffuse=0.9)
+    ball_material = Material(type='lambert', albedo=Vec3(255, 0, 0), k_diffuse=0.9)
+    glass_material = Material(type='dielectric', albedo=Vec3(0, 150, 125), k_refraction=1.7, k_attenuation=0.5)
+    gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.7)
+    sky = Material(type='lambert', albedo=Vec3(150, 150, 255), k_diffuse=0.9)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
     shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
+    shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
+    shapes.append(Sphere(Vec3(2.5, 0, 4.5), 1, gold_material))
+    shapes.append(Sphere(Vec3(0, 0, 0), 300, sky))
 
     # get lights
     point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255)), PointLight(Vec3(-3, 3, 3), Vec3(255, 255, 255))]
