@@ -2,8 +2,6 @@ import argparse
 import math
 import time
 import multiprocessing
-import statistics
-import pdb
 import random
 
 PIXEL_SIZE = 0.01
@@ -20,6 +18,12 @@ def schlick(cosine, ref_idx):
     r0 = (1-ref_idx) / (1+ref_idx)
     r0 = r0 * r0
     return r0 + (1-r0) * math.pow((1 - cosine), 5)
+
+def mean(array):
+    sum = 0
+    for item in array:
+        sum += item
+    return sum / len(array)
 
 #######################################
 ### MATH PRIMITIVES
@@ -204,7 +208,7 @@ def trace_rays_in_row(shapes, point_lights, i, width, height, camera_eye, camera
     for j in range(width):
         result = trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
         for k in range(3):
-            array[i * width * 3 + j * 3 + k] = math.floor(result[k])
+            array[i * width * 3 + j * 3 + k] = int(math.floor(result[k]))
 
 def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
     ipc = camera_eye + camera_front * focal_dist
@@ -231,7 +235,7 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
             occlusions = []
             for light in point_lights:
                 occlusions.append(occlusion(ray, min_t, shapes, light))
-            color *= statistics.mean(occlusions)
+            color *= mean(occlusions)
         colors.append(color)
 
     # retorna media das cores
@@ -328,7 +332,7 @@ def occlusion(ray, point_of_intersection, shapes, light):
             k_occlusions.append(0)
         else:
             k_occlusions.append(1 + ray_to_light.direction.dot(ray.direction))
-    return statistics.mean(k_occlusions)
+    return mean(k_occlusions)
 
 #######################################
 ### MAIN
@@ -337,13 +341,11 @@ def occlusion(ray, point_of_intersection, shapes, light):
 def main():
     # pegar arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('input_file', type=str, help='arquivo de input')
     parser.add_argument('output_file', type=str, help='arquivo de saida')
     parser.add_argument('-width', type=int, help='largura do arquivo de saida')
     parser.add_argument('-height', type=int, help='altura do arquivo de saida')
 
     args = parser.parse_args()
-    inf = args.input_file
     ouf = args.output_file
     width = 480
     height = 340
@@ -357,9 +359,9 @@ def main():
     focal_dist = 1
     camera_target = Vec3(0, 0, 5)
     camera_up = Vec3(0, -1, 0)
-    camera_right = (camera_target - camera_eye).cross(camera_up).normalize()
-    camera_up = camera_right.cross((camera_target - camera_eye).normalize())
     camera_front = (camera_target - camera_eye).normalize()
+    camera_right = camera_front.cross(camera_up).normalize()
+    camera_up = camera_right.cross((camera_target - camera_eye).normalize())
 
     # get shapes
     shapes = []
