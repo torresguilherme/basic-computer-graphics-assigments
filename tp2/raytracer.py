@@ -217,7 +217,7 @@ class Mesh:
                     elif in_line[0] == 'f':
                         for i in range(1, len(in_line)):
                             indices = in_line[i].split('/')
-                            self.faces.append(int(indices[0]) + 1)
+                            self.faces.append(int(indices[0]) - 1)
 
 #######################################
 ### RAY INTERSECT HANDLING
@@ -342,74 +342,73 @@ def intersects(ray, shape, other_shapes, occlusion=False):
         pass
     
     # intersect with triangle
-    for i in (0, shape.faces, 3):
-        # define triangle
-        p0 = shape.vertices[i]
-        p1 = shape.vertices[i+1]
-        p2 = shape.vertices[i+2]
-        edge0 = p1 - p0
-        edge1 = p2 - p1
-        edge2 = p0 - p2
+    intersections = []
 
-        # computing plane intersection first
-        p0p1 = p1 - p0
-        p0p2 = p1 - p0
-        p_normal = p0p1.cross(p0p2)
-        area2 = p_normal.lenght()
-
-        # find intersection point with plane
-        # check if they're parallel
-        n_dot_ray_dir = p_normal.dot(ray.direction)
-        if abs(n_dot_ray_dir) < OBJ_NEAR:
-            # they're parallel (or almost), no intersection
-            if occlusion:
-                return -1
-            return -1, SKYBOX
-        
-        d = p_normal.dot(p0)
-
-        # compute t
-        t = (p_normal.dot(ray.start) + d) / n_dot_ray_dir
-        
-        # check if triangle if behind
-        if t < 0:
-            if occlusion:
-                return -1
-            return -1, SKYBOX
-        
-        # compute intersection point
-        ip = ray.start + ray.direction * t
-        
-        # inside-outside test
-        vp0 = ip - p0
-        cr = edge0.cross(vp0)
-        if p_normal.dot(cr) < 0:
-            if occlusion:
-                return -1
-            return -1, SKYBOX
-        
-        vp1 = ip - p1
-        cr = edge1.cross(vp1)
-        if p_normal.dot(cr) < 0:
-            if occlusion:
-                return -1
-            return -1, SKYBOX
-
-        vp2 = ip - p2
-        cr = edge1.cross(vp2)
-        if p_normal.dot(cr) < 0:
-            if occlusion:
-                return -1
-            return -1, SKYBOX
-        
-        # if all tests passed, the ray hits the triangle
-        if occlusion:
-            return t
-        return t, shape.material.albedo
+    for i in range(0, len(shape.faces), 3):
+        intersections.append(intersect_with_triangle(ray, shape, other_shapes,
+            shape.vertices[shape.faces[i]], shape.vertices[shape.faces[i+1]], shape.vertices[shape.faces[i+2]]))
+    
+    if len(intersections):
+        intersections.sort(key=lambda val: val[0])
+        for i in intersections:
+            if i[0] > OBJ_NEAR:
+                if occlusion:
+                    return i[0]
+                return i
 
     if occlusion:
         return -1
     return -1, SKYBOX
+
+def intersect_with_triangle(ray, shape, shapes, p0, p1, p2):
+    edge0 = p1 - p0
+    edge1 = p2 - p1
+    edge2 = p0 - p2
+
+    # computing plane intersection first
+    p0p1 = p1 - p0
+    p0p2 = p2 - p0
+    p_normal = p0p1.cross(p0p2)
+    area2 = p_normal.lenght()
+
+    # find intersection point with plane
+    # check if they're parallel
+    n_dot_ray_dir = p_normal.dot(ray.direction)
+    if abs(n_dot_ray_dir) < OBJ_NEAR:
+        # they're parallel (or almost), no intersection
+        return -1, SKYBOX
+    
+    d = p_normal.dot(p0)
+
+    # compute t
+    t = (p_normal.dot(ray.start) + d) / n_dot_ray_dir
+    
+    # check if triangle if behind
+    if t < 0:
+        return -1, SKYBOX     
+
+    # compute intersection point
+    ip = ray.start + ray.direction * t
+    
+    # inside-outside test
+    vp0 = ip - p0
+    cr = edge0.cross(vp0)
+    if p_normal.dot(cr) < 0:
+        return -1, SKYBOX
+
+    vp1 = ip - p1
+    cr = edge1.cross(vp1)
+    if p_normal.dot(cr) < 0:
+        return -1, SKYBOX
+
+    vp2 = ip - p2
+    cr = edge1.cross(vp2)
+    if p_normal.dot(cr) < 0:
+        return -1, SKYBOX        
+    # if all tests passed, the ray hits the triangle
+    if occlusion:
+        return t, shape.material.albedo
+
 
 def occlusion(ray, point_of_intersection, shapes, light):
     k_occlusions = []
@@ -480,6 +479,7 @@ def main():
                     args=(shapes, point_lights, i + k, width, height, camera_eye, \
                     camera_up, camera_right, camera_front, focal_dist, array))
                 processes[k].start()
+                print('renderizando linha: ', i+k)
         
         for p in processes:
             p.join()
