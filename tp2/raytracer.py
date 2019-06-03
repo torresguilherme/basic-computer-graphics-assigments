@@ -13,6 +13,15 @@ CPUS = multiprocessing.cpu_count() * 2
 OBJ_NEAR = 0.0005
 
 #######################################
+### AUXILIARY
+#######################################
+
+def schlick(cosine, ref_idx):
+    r0 = (1-ref_idx) / (1+ref_idx)
+    r0 = r0 * r0
+    return r0 + (1-r0) * math.pow((1 - cosine), 5)
+
+#######################################
 ### MATH PRIMITIVES
 #######################################
 
@@ -50,6 +59,9 @@ class Vec3:
         else:
             raise IndexError('Vec3 index must be in range, not ' + key)
     
+    def __neg__(self):
+        return Vec3(-self.x, -self.y, -self.z)
+
     def __add__(self, other):
         return Vec3(self.x + other.x, self.y + other.y, self.z + other.z)
     
@@ -94,7 +106,7 @@ class Vec3:
         unit_v = self.normalize()
         cosine = unit_v.dot(normal)
         discriminant = 1 - ni_over_nt * ni_over_nt * (1 - cosine * cosine)
-        if(discriminant >= 0):
+        if(discriminant > 0):
             refracted_vec = (unit_v - normal * cosine) * ni_over_nt - normal * math.sqrt(discriminant)
             return refracted_vec
         return self.reflect(normal)
@@ -200,18 +212,15 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
         
         min_t = VISION_RANGE
         color = Vec3(0, 0, 0)
-        shape = None
         for p in params:
             if p[0] >= OBJ_NEAR and p[0] < min_t:
                 color = p[1]
                 min_t = p[0]
-                shape = p[2]
 
         if color != Vec3(0, 0, 0):
-            other_shapes = [x for x in shapes if x != shape]
             occlusions = []
             for light in point_lights:
-                occlusions.append(occlusion(ray, min_t, other_shapes, light))
+                occlusions.append(occlusion(ray, min_t, shapes, light))
             color *= statistics.mean(occlusions)
         colors.append(color)
 
@@ -243,7 +252,7 @@ def intersects(ray, shape, other_shapes, occlusion=False):
             try:
                 shape.material.k_diffuse
                 # cover lambertian materials
-                return solution, shape.material.albedo * shape.material.k_diffuse, shape
+                return solution, shape.material.albedo * shape.material.k_diffuse
             except AttributeError:
                 pass
             try:
@@ -251,7 +260,7 @@ def intersects(ray, shape, other_shapes, occlusion=False):
                 # cover reflective materials
                 reflected_ray = Ray(ray.point_at_t(solution),
                     ray.direction.reflect(shape.normal(ray.point_at_t(solution))) \
-                    + Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
+                    + Vec3(random.random(), random.random(), random.random()) * shape.material.fuzz)
                 hits = []
                 other_shapes_real = [x for x in other_shapes if x != shape]
                 for s in other_shapes_real:
@@ -261,17 +270,17 @@ def intersects(ray, shape, other_shapes, occlusion=False):
                 hits.sort(key=lambda val: val[0])
                 try:
                     return solution, hits[0][1] * shape.material.k_reflectance + \
-                            shape.material.albedo * (1 - shape.material.k_reflectance), shape
+                            shape.material.albedo * (1 - shape.material.k_reflectance)
                 except IndexError:
                     return solution, Vec3() * shape.material.k_reflectance + \
-                            shape.material.albedo * (1 - shape.material.k_reflectance), shape
+                            shape.material.albedo * (1 - shape.material.k_reflectance)
             except AttributeError:
                 pass
             try:
                 shape.material.k_attenuation
                 # cover dielectric materials
                 refracted_ray = Ray(ray.point_at_t(solution),
-                    ray.direction.refract(shape.normal(ray.point_at_t(solution)), shape.material.k_refraction))
+                    ray.direction.refract(shape.normal(ray.point_at_t(solution)), 1/shape.material.k_refraction))
                     #+ Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
                 hits = []
                 other_shapes_real = [x for x in other_shapes if x != shape]
@@ -282,16 +291,16 @@ def intersects(ray, shape, other_shapes, occlusion=False):
                 hits.sort(key=lambda val: val[0])
                 try:
                     return solution, hits[0][1] * shape.material.k_attenuation + \
-                            shape.material.albedo * (1 - shape.material.k_attenuation), shape
+                            shape.material.albedo * (1 - shape.material.k_attenuation)
                 except IndexError:
                     return solution, Vec3() * shape.material.k_attenuation + \
-                            shape.material.albedo * (1 - shape.material.k_attenuation), shape
+                            shape.material.albedo * (1 - shape.material.k_attenuation)
             except AttributeError:
                 pass
         else:
             if occlusion:
                 return -1
-            return -1, Vec3(), shape
+            return -1, Vec3()
     except AttributeError:
         pass
     
@@ -308,7 +317,7 @@ def occlusion(ray, point_of_intersection, shapes, light):
         if intersects(ray_to_light, shape, shapes, occlusion=True) > OBJ_NEAR:
             k_occlusions.append(0)
         else:
-            k_occlusions.append(1+ray_to_light.direction.dot(ray.direction))
+            k_occlusions.append(1 + ray_to_light.direction.dot(ray.direction))
     return statistics.mean(k_occlusions)
 
 #######################################
@@ -356,7 +365,7 @@ def main():
     shapes.append(Sphere(Vec3(0, 0, 0), 300, sky))
 
     # get lights
-    point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255)), PointLight(Vec3(-3, 3, 3), Vec3(255, 255, 255))]
+    point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255))]
     
     # render image
     start_time = time.time()
