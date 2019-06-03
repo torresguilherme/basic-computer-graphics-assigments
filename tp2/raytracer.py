@@ -103,6 +103,9 @@ class Vec3:
             self.x * other.y - self.y * other.x
         )
     
+    def euclid_distance(self, other):
+        return math.sqrt((self.x - other.x) ** 2 + (self.y - other.y) ** 2 + (self.z - other.z) ** 2)
+    
     def reflect(self, normal):
         return self - (normal * 2 * self.dot(normal))
     
@@ -155,6 +158,10 @@ class Material:
     def __init__(self, **kwargs):
         self.type = kwargs.get('type')
         self.albedo = kwargs.get('albedo')
+        try:
+            self.emission = kwargs.get('emission')
+        except:
+            self.emission = Vec3()
         if self.type == 'dielectric':
             # cover glass/dielectric materials
             self.k_refraction = kwargs.get('k_refraction')
@@ -213,12 +220,14 @@ def trace_rays_in_row(shapes, point_lights, i, width, height, camera_eye, camera
 def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
     ipc = camera_eye + camera_front * focal_dist
     colors = []
+    sqrt = math.sqrt
     for k in range(DISTRIBUTED_RAYS):
-        sampling_offset = (k % math.sqrt(DISTRIBUTED_RAYS) / math.sqrt(DISTRIBUTED_RAYS), \
-                            k / math.sqrt(DISTRIBUTED_RAYS) / math.sqrt(DISTRIBUTED_RAYS))
+        sqrt_dist_rays = sqrt(DISTRIBUTED_RAYS)
+        sampling_offset = (sqrt_dist_rays - (k % sqrt_dist_rays / sqrt_dist_rays), \
+                            sqrt_dist_rays - (k / sqrt_dist_rays / sqrt_dist_rays))
         # ray = eye + t * (pixel_pos - eye)
-        ray = Ray(camera_eye, (ipc - camera_eye) + (camera_right * (j - width/2 + sampling_offset[0]) * PIXEL_SIZE) \
-            + (camera_up * (height/2 - i + sampling_offset[1]) * PIXEL_SIZE))
+        pixel_pos = ipc + (camera_right * (j - width/2 + sampling_offset[0]) + camera_up * (height/2 - i + sampling_offset[1])) * PIXEL_SIZE
+        ray = Ray(camera_eye, pixel_pos - camera_eye)
         
         params = []
         for s in shapes:
@@ -266,7 +275,7 @@ def intersects(ray, shape, other_shapes, occlusion=False):
             try:
                 shape.material.k_diffuse
                 # cover lambertian materials
-                return solution, shape.material.albedo * shape.material.k_diffuse
+                return solution, shape.material.albedo * shape.material.k_diffuse + shape.material.emission
             except AttributeError:
                 pass
             try:
@@ -284,10 +293,12 @@ def intersects(ray, shape, other_shapes, occlusion=False):
                 hits.sort(key=lambda val: val[0])
                 try:
                     return solution, hits[0][1] * shape.material.k_reflectance + \
-                            shape.material.albedo * (1 - shape.material.k_reflectance)
+                            shape.material.albedo * (1 - shape.material.k_reflectance) + \
+                            shape.material.emission
                 except IndexError:
                     return solution, Vec3() * shape.material.k_reflectance + \
-                            shape.material.albedo * (1 - shape.material.k_reflectance)
+                            shape.material.albedo * (1 - shape.material.k_reflectance) + \
+                            shape.material.emission
             except AttributeError:
                 pass
             try:
@@ -305,10 +316,12 @@ def intersects(ray, shape, other_shapes, occlusion=False):
                 hits.sort(key=lambda val: val[0])
                 try:
                     return solution, hits[0][1] * shape.material.k_attenuation + \
-                            shape.material.albedo * (1 - shape.material.k_attenuation)
+                            shape.material.albedo * (1 - shape.material.k_attenuation) + \
+                            shape.material.emission
                 except IndexError:
                     return solution, Vec3() * shape.material.k_attenuation + \
-                            shape.material.albedo * (1 - shape.material.k_attenuation)
+                            shape.material.albedo * (1 - shape.material.k_attenuation) + \
+                            shape.material.emission
             except AttributeError:
                 pass
         else:
@@ -355,13 +368,14 @@ def main():
         height = args.height
     
     # camera parameters
-    camera_eye = Vec3(0, 2, 0)
-    focal_dist = 1
+    camera_eye = Vec3(0, 0, 0)
+    focal_dist = PIXEL_SIZE * 100
     camera_target = Vec3(0, 0, 5)
-    camera_up = Vec3(0, -1, 0)
+    camera_up = Vec3(0, 1, 0)
     camera_front = (camera_target - camera_eye).normalize()
-    camera_right = camera_front.cross(camera_up).normalize()
-    camera_up = camera_right.cross((camera_target - camera_eye).normalize())
+    camera_right = camera_up.cross(camera_front).normalize()
+    camera_up = camera_right.cross(camera_front)
+    print(camera_eye, camera_front, camera_right, camera_up)
 
     # get shapes
     shapes = []
@@ -369,7 +383,7 @@ def main():
     ball_material = Material(type='lambert', albedo=Vec3(255, 0, 0), k_diffuse=0.9)
     glass_material = Material(type='dielectric', albedo=Vec3(0, 150, 125), k_refraction=1.7, k_attenuation=0.5)
     gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.7)
-    sky = Material(type='lambert', albedo=Vec3(150, 150, 255), k_diffuse=0.9)
+    sky = Material(type='lambert', emission=Vec3(150, 150, 255), albedo=Vec3(150, 150, 255), k_diffuse=0.9)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
     shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
     shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
