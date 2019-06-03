@@ -184,7 +184,17 @@ class Sphere:
         return 'Type of shape: sphere. Center: ' + str(self.center) + ' Radius: ' + str(self.radius) + '\nMaterial:\n\t' + str(self.material)
     
     def normal(self, point):
-        return (point - self.center).normalize() 
+        return (point - self.center).normalize()
+
+class Mesh:
+    def __init__(self, file_name, material):
+        self.material = material
+        self.vertices = []
+        self.faces = []
+        self.uvs = []
+        self.vertex_normals = []
+
+        # loading obj
 
 #######################################
 ### RAY INTERSECT HANDLING
@@ -343,11 +353,11 @@ def main():
         height = args.height
     
     # camera parameters
-    camera_eye = Vec3()
-    focal_dist = 2
-    camera_target = Vec3(0, 0, 2)
-    camera_up = Vec3(0, 1, 0)
-    camera_right = camera_up.cross(camera_target - camera_eye).normalize()
+    camera_eye = Vec3(0, 2, 0)
+    focal_dist = 1
+    camera_target = Vec3(0, 0, 5)
+    camera_up = Vec3(0, -1, 0)
+    camera_right = (camera_target - camera_eye).cross(camera_up).normalize()
     camera_up = camera_right.cross((camera_target - camera_eye).normalize())
     camera_front = (camera_target - camera_eye).normalize()
 
