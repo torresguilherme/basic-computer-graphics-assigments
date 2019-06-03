@@ -204,6 +204,7 @@ class Mesh:
         self.vertices = []
         self.faces = []
         self.vertex_normals = []
+        self.normal_indices = []
 
         # loading obj
         with open(file_name, 'r') as obj:
@@ -218,6 +219,7 @@ class Mesh:
                         for i in range(1, len(in_line)):
                             indices = in_line[i].split('/')
                             self.faces.append(int(indices[0]) - 1)
+                            self.normal_indices.append(int(indices[2]) - 1)
 
 #######################################
 ### RAY INTERSECT HANDLING
@@ -346,7 +348,8 @@ def intersects(ray, shape, other_shapes, occlusion=False):
 
     for i in range(0, len(shape.faces), 3):
         intersections.append(intersect_with_triangle(ray, shape, other_shapes,
-            shape.vertices[shape.faces[i]], shape.vertices[shape.faces[i+1]], shape.vertices[shape.faces[i+2]]))
+            shape.vertices[shape.faces[i]], shape.vertices[shape.faces[i+1]], shape.vertices[shape.faces[i+2]],
+            shape.normal_indices[i], shape.normal_indices[i+1], shape.normal_indices[i+2]))
     
     if len(intersections):
         intersections.sort(key=lambda val: val[0])
@@ -360,7 +363,7 @@ def intersects(ray, shape, other_shapes, occlusion=False):
         return -1
     return -1, SKYBOX
 
-def intersect_with_triangle(ray, shape, shapes, p0, p1, p2):
+def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
     edge0 = p1 - p0
     edge1 = p2 - p1
     edge2 = p0 - p2
@@ -404,10 +407,59 @@ def intersect_with_triangle(ray, shape, shapes, p0, p1, p2):
     vp2 = ip - p2
     cr = edge1.cross(vp2)
     if p_normal.dot(cr) < 0:
-        return -1, SKYBOX        
+        return -1, SKYBOX    
+
     # if all tests passed, the ray hits the triangle
-    if occlusion:
-        return t, shape.material.albedo
+    try:
+        # cover lambertian materials
+        return t, shape.material.albedo * shape.material.k_diffuse
+    except AttributeError:
+        pass
+    try:
+        # cover reflective materials
+        shape.material.k_reflectance
+        reflected_ray = Ray(ray.point_at_t(t),
+                    ray.direction.reflect(interpolate(shape.vertex_normals[ni0], shape.vertex_normals[ni1], shape.vertex_normals[ni2])) \
+                    + Vec3(random.random(), random.random(), random.random()) * shape.material.fuzz)
+        hits = []
+        other_shapes_real = [x for x in shapes if x != shape]
+        for s in other_shapes_real:
+            reflected_intersection = intersects(reflected_ray, s, other_shapes_real)
+            if reflected_intersection[0] > OBJ_NEAR:
+                hits.append(reflected_intersection)
+        hits.sort(key=lambda val: val[0])
+        try:
+            return t, hits[0][1] * shape.material.k_reflectance + \
+                    shape.material.albedo * (1 - shape.material.k_reflectance)
+        except IndexError:
+            return t, SKYBOX * shape.material.k_reflectance + \
+                    shape.material.albedo * (1 - shape.material.k_reflectance)
+    except AttributeError:
+        pass
+    try:
+        # cover dielectric materials
+        shape.material.k_attenuation
+        refracted_ray = Ray(ray.point_at_t(t),
+            ray.direction.refract(interpolate(shape.vertex_normals[ni0], shape.vertex_normals[ni1], shape.vertex_normals[ni2]),
+            1/shape.material.k_refraction))
+            #+ Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
+        hits = []
+        other_shapes_real = [x for x in shapes if x != shape]
+        for s in other_shapes_real:
+            refracted_intersection = intersects(refracted_ray, s, other_shapes_real)
+            if refracted_intersection[0] > OBJ_NEAR:
+                hits.append(refracted_intersection)
+        hits.sort(key=lambda val: val[0])
+        try:
+            return t, hits[0][1] * shape.material.k_attenuation + \
+                    shape.material.albedo * (1 - shape.material.k_attenuation)
+        except IndexError:
+            return t, SKYBOX * shape.material.k_attenuation + \
+                    shape.material.albedo * (1 - shape.material.k_attenuation)
+    except AttributeError:
+        pass
+    
+    return -1, SKYBOX
 
 
 def occlusion(ray, point_of_intersection, shapes, light):
@@ -462,7 +514,7 @@ def main():
     #shapes.append(Sphere(Vec3(2.5, 0, 4.5), 1, gold_material))
     #shapes.append(Sphere(Vec3(0, 0, 0), 300, sky))
     teapot_material = Material(type='reflective', albedo=Vec3(220, 220, 220), k_reflectance=0.2, fuzz=0)
-    shapes.append(Mesh('meshes/teapot.obj', Vec3(0, 0, 3), 1, teapot_material))
+    shapes.append(Mesh('meshes/teapot.obj', Vec3(0, 0, 3), 0.2, teapot_material))
 
     # get lights
     point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255))]
