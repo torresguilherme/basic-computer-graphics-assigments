@@ -25,9 +25,6 @@ def mean(array):
         sum += item
     return sum / len(array)
 
-def interpolate(v1, v2, v3):
-    return (v1 + v2 + v3) / 3
-
 #######################################
 ### MATH PRIMITIVES
 #######################################
@@ -90,7 +87,7 @@ class Vec3:
     def __truediv__(self, scalar):
         return Vec3(self.x / scalar, self.y / scalar, self.z / scalar)
     
-    def __trueidiv__(self, scalar):
+    def __itruediv__(self, scalar):
         return self / scalar
     
     def array(self):
@@ -129,6 +126,10 @@ class Vec3:
             return Vec3(self.x / self.lenght(), self.y / self.lenght(), self.z / self.lenght())
         except ZeroDivisionError:
             return Vec3()
+    
+    def interpolate(self, v2, v3):
+        aux = self + v2 + v3
+        return Vec3(aux.x / 3, aux.y / 3, aux.z / 3)
 
 class Ray:
     def __init__(self, *args):
@@ -405,7 +406,7 @@ def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
         return -1, SKYBOX
 
     vp2 = ip - p2
-    cr = edge1.cross(vp2)
+    cr = edge2.cross(vp2)
     if p_normal.dot(cr) < 0:
         return -1, SKYBOX    
 
@@ -419,7 +420,7 @@ def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
         # cover reflective materials
         shape.material.k_reflectance
         reflected_ray = Ray(ray.point_at_t(t),
-                    ray.direction.reflect(interpolate(shape.vertex_normals[ni0], shape.vertex_normals[ni1], shape.vertex_normals[ni2])) \
+                    ray.direction.reflect(shape.vertex_normals[ni0].interpolate(shape.vertex_normals[ni1], shape.vertex_normals[ni2])) \
                     + Vec3(random.random(), random.random(), random.random()) * shape.material.fuzz)
         hits = []
         other_shapes_real = [x for x in shapes if x != shape]
@@ -440,7 +441,7 @@ def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
         # cover dielectric materials
         shape.material.k_attenuation
         refracted_ray = Ray(ray.point_at_t(t),
-            ray.direction.refract(interpolate(shape.vertex_normals[ni0], shape.vertex_normals[ni1], shape.vertex_normals[ni2]),
+            ray.direction.refract(shape.vertex_normals[ni0].interpolate(shape.vertex_normals[ni1], shape.vertex_normals[ni2]),
             1/shape.material.k_refraction))
             #+ Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
         hits = []
@@ -469,7 +470,7 @@ def occlusion(ray, point_of_intersection, shapes, light):
         if intersects(ray_to_light, shape, shapes, occlusion=True) > OBJ_NEAR:
             k_occlusions.append(0)
         else:
-            k_occlusions.append(1 + ray_to_light.direction.dot(ray.direction))
+            k_occlusions.append(1 + min(0, ray_to_light.direction.dot(ray.direction)))
     return mean(k_occlusions)
 
 #######################################
@@ -504,17 +505,15 @@ def main():
     # get shapes
     shapes = []
     ground_material = Material(type='lambert', albedo=Vec3(80, 80, 30), k_diffuse=0.8)
-    #ball_material = Material(type='lambert', albedo=Vec3(255, 0, 0), k_diffuse=0.9)
-    #glass_material = Material(type='dielectric', albedo=Vec3(150, 150, 150), k_refraction=1.7, k_attenuation=0.5)
-    #gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.7)
-    #sky = Material(type='lambert', emitting=True, albedo=Vec3(150, 150, 255), k_diffuse=0.9)
+    ball_material = Material(type='lambert', albedo=Vec3(255, 0, 0), k_diffuse=0.9)
+    glass_material = Material(type='dielectric', albedo=Vec3(150, 150, 150), k_refraction=1.7, k_attenuation=0.5)
+    gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.7)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
     #shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
     #shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
     #shapes.append(Sphere(Vec3(2.5, 0, 4.5), 1, gold_material))
-    #shapes.append(Sphere(Vec3(0, 0, 0), 300, sky))
-    teapot_material = Material(type='reflective', albedo=Vec3(220, 220, 220), k_reflectance=0.2, fuzz=0)
-    shapes.append(Mesh('meshes/teapot.obj', Vec3(0, 0, 3), 0.2, teapot_material))
+    teapot_material = Material(type='lambert', albedo=Vec3(220, 120, 220), k_diffuse=0.9)
+    shapes.append(Mesh('meshes/cube.obj', Vec3(0, 0, 3), 1, teapot_material))
 
     # get lights
     point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255))]
@@ -531,7 +530,7 @@ def main():
                     args=(shapes, point_lights, i + k, width, height, camera_eye, \
                     camera_up, camera_right, camera_front, focal_dist, array))
                 processes[k].start()
-                print('renderizando linha: ', i+k)
+                print('renderizando linha: ' + str(i+k))
         
         for p in processes:
             p.join()
