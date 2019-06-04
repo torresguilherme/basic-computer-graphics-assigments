@@ -213,7 +213,7 @@ class Mesh:
                 in_line = line.split()
                 if len(in_line) and in_line[0] != '#':
                     if in_line[0] == 'v':
-                        self.vertices.append(Vec3(float(in_line[1]) * scale, float(in_line[2]) * scale, float(in_line[3]) * scale) + position)
+                        self.vertices.append(Vec3(float(in_line[1]) * scale, float(in_line[2]) * scale, float(in_line[3]) * scale) + position * scale)
                     elif in_line[0] == 'vn':
                         self.vertex_normals.append(Vec3(float(in_line[1]), float(in_line[2]), float(in_line[3])))
                     elif in_line[0] == 'f':
@@ -226,13 +226,14 @@ class Mesh:
 ### RAY INTERSECT HANDLING
 #######################################
 
-def trace_rays_in_row(shapes, point_lights, i, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist, array):
+def trace_rays_in_row(shapes, point_lights, i, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist, aperture, array):
     for j in range(width):
-        result = trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist)
+        result = trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist, aperture)
         for k in range(3):
             array[i * width * 3 + j * 3 + k] = int(math.floor(result[k]))
 
-def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist):
+def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up, camera_right, camera_front, focal_dist, aperture):
+    lens_radius = aperture / 2
     ipc = camera_eye + camera_front * focal_dist
     colors = []
     sqrt = math.sqrt
@@ -242,7 +243,8 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
                             sqrt_dist_rays - (k / sqrt_dist_rays / sqrt_dist_rays))
         # ray = eye + t * (pixel_pos - eye)
         pixel_pos = ipc + (camera_right * (j - width/2 + sampling_offset[0]) + camera_up * (height/2 - i + sampling_offset[1])) * PIXEL_SIZE
-        ray = Ray(camera_eye, pixel_pos - camera_eye)
+        offset = Vec3(random.random() * (ipc - pixel_pos).x * PIXEL_SIZE * 10, random.random() * (ipc - pixel_pos).y * PIXEL_SIZE * 10, 0.0) * lens_radius
+        ray = Ray(camera_eye, pixel_pos - camera_eye + offset)
         
         params = []
         for s in shapes:
@@ -495,7 +497,8 @@ def main():
     
     # camera parameters
     camera_eye = Vec3(0, 0, 0)
-    focal_dist = PIXEL_SIZE * 100
+    focal_dist = PIXEL_SIZE * 200
+    aperture = .5
     camera_target = Vec3(0, 0, 5)
     camera_up = Vec3(0, 1, 0)
     camera_front = (camera_target - camera_eye).normalize()
@@ -509,11 +512,9 @@ def main():
     glass_material = Material(type='dielectric', albedo=Vec3(150, 150, 150), k_refraction=1.7, k_attenuation=0.5)
     gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.7)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
-    #shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
-    #shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
-    #shapes.append(Sphere(Vec3(2.5, 0, 4.5), 1, gold_material))
-    teapot_material = Material(type='lambert', albedo=Vec3(220, 120, 220), k_diffuse=0.9)
-    shapes.append(Mesh('meshes/cube.obj', Vec3(0, 0, 3), 1, teapot_material))
+    shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
+    shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
+    shapes.append(Sphere(Vec3(2.5, 0, 4.5), 1, gold_material))
 
     # get lights
     point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255))]
@@ -528,7 +529,7 @@ def main():
             if i + k < height:
                 processes[k] = multiprocessing.Process(target=trace_rays_in_row, \
                     args=(shapes, point_lights, i + k, width, height, camera_eye, \
-                    camera_up, camera_right, camera_front, focal_dist, array))
+                    camera_up, camera_right, camera_front, focal_dist, aperture, array))
                 processes[k].start()
                 print('renderizando linha: ' + str(i+k))
         
