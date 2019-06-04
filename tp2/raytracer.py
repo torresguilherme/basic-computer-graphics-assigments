@@ -5,7 +5,7 @@ import multiprocessing
 import random
 
 PIXEL_SIZE = 0.01
-DISTRIBUTED_RAYS = 4
+DISTRIBUTED_RAYS = 16
 VISION_RANGE = 2 ** 63 - 1
 CPUS = multiprocessing.cpu_count() * 2
 OBJ_NEAR = 0.0005
@@ -188,10 +188,11 @@ class Material:
 #######################################
 
 class Sphere:
-    def __init__(self, center, radius, material):
+    def __init__(self, center, radius, material, speed_vec=Vec3()):
         self.center = center
         self.radius = radius
         self.material = material
+        self.speed_vec = speed_vec
     
     def __str__(self):
         return 'Type of shape: sphere. Center: ' + str(self.center) + ' Radius: ' + str(self.radius) + '\nMaterial:\n\t' + str(self.material)
@@ -200,8 +201,9 @@ class Sphere:
         return (point - self.center).normalize()
 
 class Mesh:
-    def __init__(self, file_name, position, scale, material):
+    def __init__(self, file_name, position, scale, material, speed_vec=Vec3()):
         self.material = material
+        self.speed_vec = speed_vec
         self.vertices = []
         self.faces = []
         self.vertex_normals = []
@@ -245,10 +247,11 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
         pixel_pos = ipc + (camera_right * (j - width/2 + sampling_offset[0]) + camera_up * (height/2 - i + sampling_offset[1])) * PIXEL_SIZE
         offset = Vec3(random.random() * (ipc - pixel_pos).x * PIXEL_SIZE * 10, random.random() * (ipc - pixel_pos).y * PIXEL_SIZE * 10, 0.0) * lens_radius
         ray = Ray(camera_eye, pixel_pos - camera_eye + offset)
+        time = random.random()
         
         params = []
         for s in shapes:
-            params.append(intersects(ray, s, shapes))
+            params.append(intersects(ray, s, shapes, time))
         
         min_t = VISION_RANGE
         color = None
@@ -260,7 +263,7 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
         if color:
             occlusions = []
             for light in point_lights:
-                occlusions.append(occlusion(ray, min_t, shapes, light))
+                occlusions.append(occlusion(ray, min_t, shapes, light, time))
             color *= mean(occlusions)
             colors.append(color)
         else:
@@ -275,10 +278,11 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
         average[k] /= DISTRIBUTED_RAYS
     return average
 
-def intersects(ray, shape, other_shapes, occlusion=False):
+def intersects(ray, shape, other_shapes, time, occlusion=False):
     # intersect with sphere
     try:
-        oc = ray.start - shape.center
+        new_center = shape.center + shape.speed_vec * time
+        oc = ray.start - new_center
         a = ray.direction.dot(ray.direction)
         b = 2 * oc.dot(ray.direction)
         c = oc.dot(oc) - shape.radius * shape.radius
@@ -306,7 +310,7 @@ def intersects(ray, shape, other_shapes, occlusion=False):
                 hits = []
                 other_shapes_real = [x for x in other_shapes if x != shape]
                 for s in other_shapes_real:
-                    reflected_intersection = intersects(reflected_ray, s, other_shapes_real)
+                    reflected_intersection = intersects(reflected_ray, s, other_shapes_real, time)
                     if reflected_intersection[0] > OBJ_NEAR:
                         hits.append(reflected_intersection)
                 hits.sort(key=lambda val: val[0])
@@ -327,7 +331,7 @@ def intersects(ray, shape, other_shapes, occlusion=False):
                 hits = []
                 other_shapes_real = [x for x in other_shapes if x != shape]
                 for s in other_shapes_real:
-                    refracted_intersection = intersects(refracted_ray, s, other_shapes_real)
+                    refracted_intersection = intersects(refracted_ray, s, other_shapes_real, time)
                     if refracted_intersection[0] > OBJ_NEAR:
                         hits.append(refracted_intersection)
                 hits.sort(key=lambda val: val[0])
@@ -350,8 +354,10 @@ def intersects(ray, shape, other_shapes, occlusion=False):
     intersections = []
 
     for i in range(0, len(shape.faces), 3):
-        intersections.append(intersect_with_triangle(ray, shape, other_shapes,
-            shape.vertices[shape.faces[i]], shape.vertices[shape.faces[i+1]], shape.vertices[shape.faces[i+2]],
+        intersections.append(intersect_with_triangle(ray, shape, other_shapes, time,
+            shape.vertices[shape.faces[i]] + shape.speed_vec * time,
+            shape.vertices[shape.faces[i+1]] + shape.speed_vec * time,
+            shape.vertices[shape.faces[i+2]] + shape.speed_vec * time,
             shape.normal_indices[i], shape.normal_indices[i+1], shape.normal_indices[i+2]))
     
     if len(intersections):
@@ -366,7 +372,7 @@ def intersects(ray, shape, other_shapes, occlusion=False):
         return -1
     return -1, SKYBOX
 
-def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
+def intersect_with_triangle(ray, shape, shapes, time, p0, p1, p2, ni0, ni1, ni2):
     edge0 = p1 - p0
     edge1 = p2 - p1
     edge2 = p0 - p2
@@ -427,7 +433,7 @@ def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
         hits = []
         other_shapes_real = [x for x in shapes if x != shape]
         for s in other_shapes_real:
-            reflected_intersection = intersects(reflected_ray, s, other_shapes_real)
+            reflected_intersection = intersects(reflected_ray, s, other_shapes_real, time)
             if reflected_intersection[0] > OBJ_NEAR:
                 hits.append(reflected_intersection)
         hits.sort(key=lambda val: val[0])
@@ -449,7 +455,7 @@ def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
         hits = []
         other_shapes_real = [x for x in shapes if x != shape]
         for s in other_shapes_real:
-            refracted_intersection = intersects(refracted_ray, s, other_shapes_real)
+            refracted_intersection = intersects(refracted_ray, s, other_shapes_real, time)
             if refracted_intersection[0] > OBJ_NEAR:
                 hits.append(refracted_intersection)
         hits.sort(key=lambda val: val[0])
@@ -465,11 +471,11 @@ def intersect_with_triangle(ray, shape, shapes, p0, p1, p2, ni0, ni1, ni2):
     return -1, SKYBOX
 
 
-def occlusion(ray, point_of_intersection, shapes, light):
+def occlusion(ray, point_of_intersection, shapes, light, time):
     k_occlusions = []
     ray_to_light = Ray(ray.point_at_t(point_of_intersection), light.position - ray.point_at_t(point_of_intersection))
     for shape in shapes:
-        if intersects(ray_to_light, shape, shapes, occlusion=True) > OBJ_NEAR:
+        if intersects(ray_to_light, shape, shapes, time, occlusion=True) > OBJ_NEAR:
             k_occlusions.append(0)
         else:
             k_occlusions.append(1 + min(0, ray_to_light.direction.dot(ray.direction)))
@@ -510,7 +516,7 @@ def main():
     ground_material = Material(type='lambert', albedo=Vec3(80, 80, 30), k_diffuse=0.8)
     ball_material = Material(type='lambert', albedo=Vec3(255, 0, 0), k_diffuse=0.9)
     glass_material = Material(type='dielectric', albedo=Vec3(150, 150, 150), k_refraction=1.7, k_attenuation=0.5)
-    gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.7)
+    gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.0)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
     shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
     shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
