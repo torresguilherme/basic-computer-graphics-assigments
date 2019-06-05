@@ -5,10 +5,11 @@ import multiprocessing
 import random
 
 PIXEL_SIZE = 0.01
-DISTRIBUTED_RAYS = 16
+DISTRIBUTED_RAYS = 4
 VISION_RANGE = 2 ** 63 - 1
 CPUS = multiprocessing.cpu_count() * 2
 OBJ_NEAR = 0.0005
+MIN_OCCLUSION = 0.4
 
 #######################################
 ### AUXILIARY
@@ -476,7 +477,7 @@ def occlusion(ray, point_of_intersection, shapes, light, time):
     ray_to_light = Ray(ray.point_at_t(point_of_intersection), light.position - ray.point_at_t(point_of_intersection))
     for shape in shapes:
         if intersects(ray_to_light, shape, shapes, time, occlusion=True) > OBJ_NEAR:
-            k_occlusions.append(0)
+            k_occlusions.append(MIN_OCCLUSION)
         else:
             k_occlusions.append(1 + min(0, ray_to_light.direction.dot(ray.direction)))
     return mean(k_occlusions)
@@ -503,7 +504,7 @@ def main():
     
     # camera parameters
     camera_eye = Vec3(0, 0, 0)
-    focal_dist = PIXEL_SIZE * 200
+    focal_dist = PIXEL_SIZE * 100
     aperture = .5
     camera_target = Vec3(0, 0, 5)
     camera_up = Vec3(0, 1, 0)
@@ -514,16 +515,35 @@ def main():
     # get shapes
     shapes = []
     ground_material = Material(type='lambert', albedo=Vec3(80, 80, 30), k_diffuse=0.8)
-    ball_material = Material(type='lambert', albedo=Vec3(255, 0, 0), k_diffuse=0.9)
-    glass_material = Material(type='dielectric', albedo=Vec3(150, 150, 150), k_refraction=1.7, k_attenuation=0.5)
-    gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.0)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
-    shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
-    shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
-    shapes.append(Sphere(Vec3(2.5, 0, 4.5), 1, gold_material))
+
+    # generate shapes randomly
+    num_shapes = 6
+    materials = ['lambert', 'reflective', 'dielectric']
+    for i in range(num_shapes):
+        radius = random.normalvariate(width / 100, width / 5)
+        center = Vec3(random.uniform(-width * PIXEL_SIZE, width * PIXEL_SIZE), random.uniform(-height * PIXEL_SIZE, height * PIXEL_SIZE), random.uniform(focal_dist, focal_dist + 10))
+        material_type = random.sample(materials, 1)[0]
+        speed_vec = Vec3()
+        if random.uniform(0, 1) < 0.8:
+            speed_vec = Vec3(random.random() / 5, random.random() / 5, random.random() / 5)
+        material = None
+        albedo = Vec3(Vec3(random.uniform(0, 255), random.uniform(0, 255), random.uniform(0, 255)))
+        if material_type == 'lambert':
+            material = Material(type=material_type, albedo=albedo, k_diffuse=random.uniform(0, 1))
+        elif material_type == 'reflective':
+            if random.uniform(0, 1) < 0.5:
+                material = Material(type=material_type, albedo=albedo, k_reflectance=random.uniform(0, 1), fuzz=random.uniform(0, 1))
+            else:
+                material = Material(type=material_type, albedo=albedo, k_reflectance=random.uniform(0, 1), fuzz=0)
+        else:
+            material = Material(type=material_type, albedo=albedo, k_refraction=random.uniform(0, 1), k_attenuation=random.uniform(0, 1))
+        shapes.append(Sphere(center, radius, material, speed_vec=speed_vec))
 
     # get lights
-    point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255))]
+    point_lights = [PointLight(Vec3(3, 3, 3), Vec3(255, 255, 255)), PointLight(Vec3(-3, 3, 3), Vec3(255, 255, 255))]
+    print('Imagem sendo renderizada: ' + str(len(shapes)) + ' formas.')
+    print('Usando ' + str(CPUS) + ' threads e ' + str(DISTRIBUTED_RAYS) + ' raios distribuidos para cada pixel.')
     
     # render image
     start_time = time.time()
