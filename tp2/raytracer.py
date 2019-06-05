@@ -337,9 +337,9 @@ def intersects(ray, shape, other_shapes, time, occlusion=False, refracted=False)
                 for s in other_shapes_real:
                     refracted_intersection = None
                     if refracted:
-                        refracted_intersection = intersects(refracted_ray, s, other_shapes, time, refracted=False)
+                        refracted_intersection = intersects(refracted_ray, s, other_shapes_real, time, refracted=False)
                     else:
-                        refracted_intersection = intersects(refracted_ray, s, other_shapes, time, refracted=True)
+                        refracted_intersection = intersects(refracted_ray, s, other_shapes_real, time, refracted=True)
                     if refracted_intersection[0] > OBJ_NEAR:
                         hits.append(refracted_intersection)
                 hits.sort(key=lambda val: val[0])
@@ -495,6 +495,7 @@ def occlusion(ray, point_of_intersection, shapes, light, time):
 #######################################
 
 def main():
+    random.seed(time.time())
     # pegar arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('output_file', type=str, help='arquivo de saida')
