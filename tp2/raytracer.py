@@ -5,10 +5,11 @@ import multiprocessing
 import random
 
 PIXEL_SIZE = 0.01
-DISTRIBUTED_RAYS = 16
+DISTRIBUTED_RAYS = 4
 VISION_RANGE = 2 ** 63 - 1
 CPUS = multiprocessing.cpu_count() * 2
 OBJ_NEAR = 0.0005
+OCCLUSION_JITTER = 0.5
 
 #######################################
 ### AUXILIARY
@@ -278,7 +279,7 @@ def trace_rays(shapes, point_lights, i, j, width, height, camera_eye, camera_up,
         average[k] /= DISTRIBUTED_RAYS
     return average
 
-def intersects(ray, shape, other_shapes, time, occlusion=False):
+def intersects(ray, shape, other_shapes, time, occlusion=False, refracted=False):
     # intersect with sphere
     try:
         new_center = shape.center + shape.speed_vec * time
@@ -325,22 +326,28 @@ def intersects(ray, shape, other_shapes, time, occlusion=False):
             try:
                 shape.material.k_attenuation
                 # cover dielectric materials
-                refracted_ray = Ray(ray.point_at_t(solution),
-                    ray.direction.refract(shape.normal(ray.point_at_t(solution)), 1/shape.material.k_refraction))
+                new_direction = ray.direction.refract(shape.normal(ray.point_at_t(solution)), 1/shape.material.k_refraction)
+                if refracted:
+                    new_direction = ray.direction.refract(-shape.normal(ray.point_at_t(solution)), shape.material.k_refraction)
+                refracted_ray = Ray(ray.point_at_t(solution) + new_direction * OBJ_NEAR, new_direction)
                     #+ Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
                 hits = []
                 other_shapes_real = [x for x in other_shapes if x != shape]
                 for s in other_shapes_real:
-                    refracted_intersection = intersects(refracted_ray, s, other_shapes_real, time)
+                    refracted_intersection = None
+                    if refracted:
+                        refracted_intersection = intersects(refracted_ray, s, other_shapes, time, refracted=False)
+                    else:
+                        refracted_intersection = intersects(refracted_ray, s, other_shapes, time, refracted=True)
                     if refracted_intersection[0] > OBJ_NEAR:
                         hits.append(refracted_intersection)
                 hits.sort(key=lambda val: val[0])
                 try:
-                    return solution, hits[0][1] * shape.material.k_attenuation + \
-                            shape.material.albedo * (1 - shape.material.k_attenuation)
+                    return solution, shape.material.albedo * shape.material.k_attenuation + \
+                            hits[0][1] * (1 - shape.material.k_attenuation)
                 except IndexError:
-                    return solution, SKYBOX * shape.material.k_attenuation + \
-                            shape.material.albedo * (1 - shape.material.k_attenuation)
+                    return solution, shape.material.albedo * shape.material.k_attenuation + \
+                            SKYBOX * (1 - shape.material.k_attenuation)
             except AttributeError:
                 pass
         else:
@@ -448,9 +455,9 @@ def intersect_with_triangle(ray, shape, shapes, time, p0, p1, p2, ni0, ni1, ni2)
     try:
         # cover dielectric materials
         shape.material.k_attenuation
-        refracted_ray = Ray(ray.point_at_t(t),
-            ray.direction.refract(shape.vertex_normals[ni0].interpolate(shape.vertex_normals[ni1], shape.vertex_normals[ni2]),
-            1/shape.material.k_refraction))
+        new_direction = ray.direction.refract(shape.vertex_normals[ni0].interpolate(shape.vertex_normals[ni1], shape.vertex_normals[ni2]),
+            1/shape.material.k_refraction)
+        refracted_ray = Ray(ray.point_at_t(t) + new_direction * OBJ_NEAR, new_direction)
             #+ Vec3(1, 1, 1) * random.random() * shape.material.fuzz)
         hits = []
         other_shapes_real = [x for x in shapes if x != shape]
@@ -460,11 +467,11 @@ def intersect_with_triangle(ray, shape, shapes, time, p0, p1, p2, ni0, ni1, ni2)
                 hits.append(refracted_intersection)
         hits.sort(key=lambda val: val[0])
         try:
-            return t, hits[0][1] * shape.material.k_attenuation + \
-                    shape.material.albedo * (1 - shape.material.k_attenuation)
+            return solution, shape.material.albedo * shape.material.k_attenuation + \
+                    hits[0][1] * (1 - shape.material.k_attenuation)
         except IndexError:
-            return t, SKYBOX * shape.material.k_attenuation + \
-                    shape.material.albedo * (1 - shape.material.k_attenuation)
+            return solution, shape.material.albedo * shape.material.k_attenuation + \
+                    SKYBOX * (1 - shape.material.k_attenuation)
     except AttributeError:
         pass
     
@@ -473,7 +480,8 @@ def intersect_with_triangle(ray, shape, shapes, time, p0, p1, p2, ni0, ni1, ni2)
 
 def occlusion(ray, point_of_intersection, shapes, light, time):
     k_occlusions = []
-    ray_to_light = Ray(ray.point_at_t(point_of_intersection), light.position - ray.point_at_t(point_of_intersection))
+    ray_to_light = Ray(ray.point_at_t(point_of_intersection),
+    light.position - ray.point_at_t(point_of_intersection) + Vec3(random.random(), random.random(), random.random()) * OCCLUSION_JITTER)
     for shape in shapes:
         if intersects(ray_to_light, shape, shapes, time, occlusion=True) > OBJ_NEAR:
             k_occlusions.append(0)
@@ -519,7 +527,7 @@ def main():
     gold_material = Material(type='reflective', albedo=Vec3(200, 200, 0), k_reflectance=0.4, fuzz=0.0)
     shapes.append(Sphere(Vec3(0, -100, 20), 100, ground_material))
     shapes.append(Sphere(Vec3(0, 0, 5), 1, ball_material))
-    shapes.append(Sphere(Vec3(-2.5, 0, 4.5), 1, glass_material))
+    shapes.append(Sphere(Vec3(-.5, 0, 3), 1, glass_material))
     shapes.append(Sphere(Vec3(2.5, 0, 4.5), 1, gold_material))
 
     # get lights
