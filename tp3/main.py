@@ -5,14 +5,41 @@ import numpy as np
 import glfw
 import pathlib
 import struct
+import ctypes
 
 ###############################
 ### Animation
 ###############################
 
+class AnimationState:
+    def __init__(self,
+        start_frame,
+        end_frame,
+        fps,
+        curr_time,
+        old_time,
+        interpol,
+        anim_type,
+        curr_frame,
+        next_frame):
+        self.start_frame = start_frame
+        self.end_frame = end_frame
+        self.fps = fps
+
+        self.curr_time = curr_time
+        self.old_time = old_time
+        self.interpol = interpol
+
+        self.type = anim_type
+        
+        self.curr_frame = curr_frame
+        self.next_frame = next_frame
+
 class Animation:
-    def __init__(self):
-        pass
+    def __init__(self, first_frame, last_frame, fps):
+        self.first_frame = first_frame
+        self.last_frame = last_frame
+        self.fps = fps
 
 ###############################
 ### MD2 importing
@@ -79,10 +106,10 @@ class MD2Object:
                 translate = []
                 offset = 0
                 for j in range(3):
-                    scale.append(struct.unpack('f', buffer[offset:offset + 4]))
+                    scale.append(struct.unpack('f', buffer[offset:offset + 4])[0])
                     offset += 4
                 for j in range(3):
-                    translate.append(struct.unpack('f', buffer[offset:offset + 4]))
+                    translate.append(struct.unpack('f', buffer[offset:offset + 4])[0])
                     offset += 4
                 self.frame_names.append(buffer[offset:offset + 16].decode())
                 offset += 16
@@ -93,12 +120,50 @@ class MD2Object:
                     self.normal_indices[i].append(int.from_bytes(buffer[offset:offset + 1], byteorder='little'))
                     offset += 1
 
+        # make vertex array and buffers
+        self.vertex_bos = GL.glGenBuffers(self.num_frames)
+        for i in range(len(self.vertices)):
+            vertices_i = np.array(self.vertices[i], dtype=np.float32)
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[i])
+            GL.glBufferData(GL.GL_ARRAY_BUFFER, len(vertices_i) * 4, vertices_i, GL.GL_STATIC_DRAW)
+        
+        self.vertex_index_bo = GL.glGenBuffers(1)
+        vertex_indices = np.array(self.vertex_indices, dtype=np.uint32)
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
+        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(vertex_indices) * 4, vertex_indices, GL.GL_STATIC_DRAW)
+
+        self.tex_coord_bo = GL.glGenBuffers(1)
+        tex_coords = np.array(self.tex_coords, dtype=np.float32)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.tex_coord_bo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, len(tex_coords) * 4, tex_coords, GL.GL_STATIC_DRAW)
+
+        self.tex_coord_index_bo = GL.glGenBuffers(1)
+        tex_coord_indices = np.array(self.tex_coord_indices, dtype=np.uint32)
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.tex_coord_index_bo)
+        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(tex_coord_indices) * 4, tex_coord_indices, GL.GL_STATIC_DRAW)
+
+        # to do: calculate and make normals buffer
+        # to do: load and make texture buffer
+    
+    def render(self, shader):
+        # to do: animated rendering
+        # to do: render with texture
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
+        position = GL.glGetAttribLocation(shader, 'position')
+        GL.glVertexAttribPointer(position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
+        GL.glEnableVertexAttribArray(position)
+        
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
+        GL.glDrawElements(GL.GL_TRIANGLES, self.num_tris, GL.GL_UNSIGNED_INT, None)
+
 ###############################
 ### Renderer
 ###############################
 
 def render(window, shader, shape):
-    pass
+    GL.glUseProgram(shader)
+
+    shape.render(shader)
 
 ###############################
 ### MAIN
