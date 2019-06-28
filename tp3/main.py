@@ -6,6 +6,7 @@ import glfw
 import pathlib
 import struct
 import ctypes
+import pdb
 
 WIDTH = 1280
 HEIGHT = 760
@@ -49,7 +50,8 @@ class Animation:
 ###############################
 
 class MD2Object:
-    def __init__(self, filename, texture):
+    def __init__(self, filename, texture, shader):
+        self.shader = shader
         with open(filename, 'rb') as f:
             ### READING HEADER
             ident = f.read(4)
@@ -124,12 +126,19 @@ class MD2Object:
                     offset += 1
 
         # make vertex array and buffers
+        self.vao = GL.glGenVertexArrays(1)
+        GL.glBindVertexArray(self.vao)
+
         self.vertex_bos = GL.glGenBuffers(self.num_frames)
-        for i in range(len(self.vertices)):
+        for i in range(self.num_frames):
             vertices_i = np.array(self.vertices[i], dtype=np.float32)
             GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[i])
             GL.glBufferData(GL.GL_ARRAY_BUFFER, len(self.vertices[i]) * 4, vertices_i, GL.GL_STATIC_DRAW)
         
+        position = GL.glGetAttribLocation(self.shader, 'position')
+        GL.glEnableVertexAttribArray(position)
+        GL.glVertexAttribPointer(position, 4, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+
         self.vertex_index_bo = GL.glGenBuffers(1)
         vertex_indices = np.array(self.vertex_indices, dtype=np.uint32)
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
@@ -145,47 +154,48 @@ class MD2Object:
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.tex_coord_index_bo)
         GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(self.tex_coord_indices) * 4, tex_coord_indices, GL.GL_STATIC_DRAW)
 
+        GL.glBindVertexArray(0)
+
         # to do: calculate and make normals buffer
         # to do: load and make texture buffer
     
-    def render(self, shader):
+    def render(self):
         # to do: animated rendering
         # to do: render with texture
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
-        position = GL.glGetAttribLocation(shader, 'position')
-        GL.glVertexAttribPointer(position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
-        GL.glEnableVertexAttribArray(position)
+        #GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
+        #position = GL.glGetAttribLocation(shader, 'position')
+        #GL.glVertexAttribPointer(position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
+        #GL.glEnableVertexAttribArray(position)
         
-        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
+        #GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
+        GL.glBindVertexArray(self.vao)
         GL.glDrawElements(GL.GL_TRIANGLES, len(self.vertex_indices), GL.GL_UNSIGNED_INT, None)
 
 ###############################
 ### Renderer
 ###############################
 
-def render(shader, shape):
-    GL.glUseProgram(shader)
+def render(shape):
+    GL.glUseProgram(shape.shader)
     model_matrix = pyrr.Matrix44.from_scale((1/255, 1/255, 1/255))
     view_matrix = pyrr.Matrix44.look_at((1, 1, 1), (0, 0, 0), (0, 1, 0))
     projection_matrix = pyrr.Matrix44.perspective_projection(45, WIDTH/HEIGHT, 0.001, 1000)
     mvp_matrix = projection_matrix * view_matrix * model_matrix
-    mvp_loc = GL.glGetUniformLocation(shader, 'mvp')
+    mvp_loc = GL.glGetUniformLocation(shape.shader, 'mvp')
     GL.glUniformMatrix4fv(mvp_loc, 1, GL.GL_FALSE, mvp_matrix)
 
-    shape.render(shader)
+    shape.render()
 
 ###############################
 ### MAIN
 ###############################
 
 def main():
-    vertex_shader = pathlib.Path('vertex_shader.glsl').read_text()
-    fragment_shader = pathlib.Path('fragment_shader.glsl').read_text()
-
-    shape = MD2Object('models/dragon.md2', 'models/dragon.png')
-
+    print('initializing glfw')
     if not glfw.init():
         return
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
     window = glfw.create_window(WIDTH, HEIGHT, 'Animation', None, None)
     if not window:
         print('Nao foi possivel criar janela')
@@ -193,16 +203,25 @@ def main():
         return
     glfw.make_context_current(window)
 
+    print('reading shaders')
+    vertex_shader = pathlib.Path('vertex_shader.glsl').read_text()
+    fragment_shader = pathlib.Path('fragment_shader.glsl').read_text()
+
+    print('compiling shaders')
+    shader = shaders.compileProgram(shaders.compileShader(vertex_shader, GL.GL_VERTEX_SHADER), shaders.compileShader(fragment_shader, GL.GL_FRAGMENT_SHADER))
+
+    print('reading object')
+    shape = MD2Object('models/dragon.md2', 'models/dragon.png', shader)
+
     GL.glClearColor(0.2, 0.2, 0.2, 1.0)
     GL.glEnable(GL.GL_DEPTH_TEST)
     #GL.glCullFace(GL.GL_BACK)
 
-    shader = shaders.compileProgram(shaders.compileShader(vertex_shader, GL.GL_VERTEX_SHADER), shaders.compileShader(fragment_shader, GL.GL_FRAGMENT_SHADER))
-
+    print('everything ready to render. rendering...')
     while not glfw.window_should_close(window):
         glfw.poll_events()
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
-        render(shader, shape)
+        render(shape)
         glfw.swap_buffers(window)
 
     glfw.terminate()

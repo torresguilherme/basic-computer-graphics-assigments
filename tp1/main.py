@@ -219,6 +219,8 @@ class Teapot():
         self.nbo = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.nbo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, len(self.vertex_normals) * 4, self.vertex_normals, GL_STATIC_DRAW)
+
+        print(self.vbo, self.ebo, self.nbo)
         
     def render(self, shader):
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
