@@ -135,9 +135,10 @@ class MD2Object:
             GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[i])
             GL.glBufferData(GL.GL_ARRAY_BUFFER, len(self.vertices[i]) * 4, vertices_i, GL.GL_STATIC_DRAW)
         
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
         position = GL.glGetAttribLocation(self.shader, 'position')
         GL.glEnableVertexAttribArray(position)
-        GL.glVertexAttribPointer(position, 4, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+        GL.glVertexAttribPointer(position, 3, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
 
         self.vertex_index_bo = GL.glGenBuffers(1)
         vertex_indices = np.array(self.vertex_indices, dtype=np.uint32)
@@ -154,6 +155,8 @@ class MD2Object:
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.tex_coord_index_bo)
         GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(self.tex_coord_indices) * 4, tex_coord_indices, GL.GL_STATIC_DRAW)
 
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
+
         GL.glBindVertexArray(0)
 
         # to do: calculate and make normals buffer
@@ -162,14 +165,9 @@ class MD2Object:
     def render(self):
         # to do: animated rendering
         # to do: render with texture
-        #GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
-        #position = GL.glGetAttribLocation(shader, 'position')
-        #GL.glVertexAttribPointer(position, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, ctypes.c_void_p(0))
-        #GL.glEnableVertexAttribArray(position)
-        
-        #GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
         GL.glBindVertexArray(self.vao)
         GL.glDrawElements(GL.GL_TRIANGLES, len(self.vertex_indices), GL.GL_UNSIGNED_INT, None)
+        GL.glBindVertexArray(0)
 
 ###############################
 ### Renderer
@@ -177,7 +175,7 @@ class MD2Object:
 
 def render(shape):
     GL.glUseProgram(shape.shader)
-    model_matrix = pyrr.Matrix44.from_scale((1/255, 1/255, 1/255))
+    model_matrix = pyrr.Matrix44.from_scale((1/75, 1/75, 1/75)) * pyrr.Matrix44.from_x_rotation(90) * pyrr.Matrix44.from_z_rotation(90)
     view_matrix = pyrr.Matrix44.look_at((1, 1, 1), (0, 0, 0), (0, 1, 0))
     projection_matrix = pyrr.Matrix44.perspective_projection(45, WIDTH/HEIGHT, 0.001, 1000)
     mvp_matrix = projection_matrix * view_matrix * model_matrix
