@@ -1,12 +1,16 @@
 #version 330
 
+uniform sampler2D texture0;
+
 in vec3 pixel_position;
+in vec2 tex_coord_interpolated;
 
 out vec4 frag_color;
 
 void main()
 {
-    vec4 albedo = vec4(0.2, 1.0, 1.0, 1.0);
+    //vec3 albedo = vec4(0.2, 1.0, 1.0, 1.0);
+    vec4 albedo = texture(texture0, tex_coord_interpolated);
     vec3 light_source = vec3(0.0, 1.0, 1.0);
 
     // flat shading

@@ -6,7 +6,7 @@ import glfw
 import pathlib
 import struct
 import ctypes
-import pdb
+from PIL import Image
 
 WIDTH = 1280
 HEIGHT = 760
@@ -50,7 +50,7 @@ class Animation:
 ###############################
 
 class MD2Object:
-    def __init__(self, filename, texture, shader):
+    def __init__(self, filename, texture_file, shader):
         self.shader = shader
         with open(filename, 'rb') as f:
             ### READING HEADER
@@ -88,9 +88,9 @@ class MD2Object:
             
             self.tex_coords = []
             for i in range(self.num_tex_coords):
-                for j in range(2):
-                    self.tex_coords.append(int.from_bytes(f.read(2), byteorder='little'))
-            
+                self.tex_coords.append(int.from_bytes(f.read(2), byteorder='little')/self.skinwidth)
+                self.tex_coords.append(int.from_bytes(f.read(2), byteorder='little')/self.skinheight)
+
             self.vertex_indices = []
             self.tex_coord_indices = []
             for i in range(self.num_tris):
@@ -128,17 +128,13 @@ class MD2Object:
         # make vertex array and buffers
         self.vao = GL.glGenVertexArrays(1)
         GL.glBindVertexArray(self.vao)
+        GL.glUseProgram(self.shader)
 
         self.vertex_bos = GL.glGenBuffers(self.num_frames)
         for i in range(self.num_frames):
             vertices_i = np.array(self.vertices[i], dtype=np.float32)
             GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[i])
             GL.glBufferData(GL.GL_ARRAY_BUFFER, len(self.vertices[i]) * 4, vertices_i, GL.GL_STATIC_DRAW)
-        
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
-        position = GL.glGetAttribLocation(self.shader, 'position')
-        GL.glEnableVertexAttribArray(position)
-        GL.glVertexAttribPointer(position, 3, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
 
         self.vertex_index_bo = GL.glGenBuffers(1)
         vertex_indices = np.array(self.vertex_indices, dtype=np.uint32)
@@ -155,17 +151,34 @@ class MD2Object:
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.tex_coord_index_bo)
         GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(self.tex_coord_indices) * 4, tex_coord_indices, GL.GL_STATIC_DRAW)
 
-        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
+        # load texture and make buffer
+        texture = Image.open(texture_file).convert('RGBA').transpose(Image.FLIP_TOP_BOTTOM)
+        ix, iy, image = texture.size[0], texture.size[1], np.frombuffer(texture.tobytes('raw', 'RGBA'), dtype=np.uint8)
+        self.texture_buffer = GL.glGenTextures(1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_buffer)
+        GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT,1)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, ix, iy, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, image)
+        GL.glTexParameterf(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
+        GL.glTexParameterf(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
 
         GL.glBindVertexArray(0)
+        GL.glUseProgram(0)
 
         # to do: calculate and make normals buffer
-        # to do: load and make texture buffer
     
     def render(self):
         # to do: animated rendering
-        # to do: render with texture
         GL.glBindVertexArray(self.vao)
+        
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
+        GL.glEnableVertexAttribArray(0)
+        GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.tex_coord_bo)
+        GL.glEnableVertexAttribArray(2)
+        GL.glVertexAttribPointer(2, 2, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
         GL.glDrawElements(GL.GL_TRIANGLES, len(self.vertex_indices), GL.GL_UNSIGNED_INT, None)
         GL.glBindVertexArray(0)
 
