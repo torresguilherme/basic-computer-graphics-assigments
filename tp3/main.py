@@ -6,10 +6,12 @@ import glfw
 import pathlib
 import struct
 import ctypes
+import time
 from PIL import Image
 
 WIDTH = 1280
 HEIGHT = 760
+TIMER_LIMIT = 300 # 5 minutos de animaçao no máximo
 
 ###############################
 ### Animation
@@ -132,24 +134,19 @@ class MD2Object:
 
         self.vertex_bos = GL.glGenBuffers(self.num_frames)
         for i in range(self.num_frames):
-            vertices_i = np.array(self.vertices[i], dtype=np.float32)
+            vertices_i = np.array(self.vertices[i] + self.tex_coords, dtype=np.float32)
             GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[i])
-            GL.glBufferData(GL.GL_ARRAY_BUFFER, len(self.vertices[i]) * 4, vertices_i, GL.GL_STATIC_DRAW)
+            GL.glBufferData(GL.GL_ARRAY_BUFFER, len(vertices_i) * 4, vertices_i, GL.GL_STATIC_DRAW)
 
         self.vertex_index_bo = GL.glGenBuffers(1)
-        vertex_indices = np.array(self.vertex_indices, dtype=np.uint32)
+        indices = np.array(self.vertex_indices, dtype=np.uint32)
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
-        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(self.vertex_indices) * 4, vertex_indices, GL.GL_STATIC_DRAW)
+        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(indices) * 4, indices, GL.GL_STATIC_DRAW)
 
-        self.tex_coord_bo = GL.glGenBuffers(1)
-        tex_coords = np.array(self.tex_coords, dtype=np.float32)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.tex_coord_bo)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, len(self.tex_coords) * 4, tex_coords, GL.GL_STATIC_DRAW)
-
-        self.tex_coord_index_bo = GL.glGenBuffers(1)
-        tex_coord_indices = np.array(self.tex_coord_indices, dtype=np.uint32)
-        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.tex_coord_index_bo)
-        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(self.tex_coord_indices) * 4, tex_coord_indices, GL.GL_STATIC_DRAW)
+        self.uv_index_bo = GL.glGenBuffers(1)
+        indices = np.array(self.tex_coord_indices, dtype=np.uint32)
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.uv_index_bo)
+        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(indices) * 4, indices, GL.GL_STATIC_DRAW)
 
         # load texture and make buffer
         texture = Image.open(texture_file).convert('RGBA').transpose(Image.FLIP_TOP_BOTTOM)
@@ -164,19 +161,41 @@ class MD2Object:
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
 
-        # to do: calculate and make normals buffer
+        # animation
+        self.animation = [Animation(0, self.num_frames-1, 5)]
+        self.animation_state = AnimationState(
+            self.animation[0].first_frame, self.animation[0].last_frame, self.animation[0].fps,
+            0, 0, 0, 0,
+            self.animation[0].first_frame, self.animation[0].first_frame + 1)
     
-    def render(self):
-        # to do: animated rendering
+    def render_and_animate(self, delta):
+        self.animation_state.old_time = self.animation_state.curr_time
+        self.animation_state.curr_time += delta
+        if self.animation_state.curr_time > 1/self.animation_state.fps:
+            self.animation_state.curr_frame += 1
+            self.animation_state.next_frame += 1
+            if self.animation_state.next_frame > self.animation_state.end_frame:
+                self.animation_state.curr_frame = self.animation_state.start_frame
+                self.animation_state.next_frame = self.animation_state.start_frame + 1
+            self.animation_state.curr_time = 0
+    
+        # interpolation
+        self.animation_state.interpol = self.animation_state.curr_time / (1/self.animation_state.fps)
+        interpolator = GL.glGetUniformLocation(self.shader, 'interpolator')
+        GL.glUniform1f(interpolator, self.animation_state.interpol)
+
         GL.glBindVertexArray(self.vao)
         
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[0])
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[self.animation_state.curr_frame])
         GL.glEnableVertexAttribArray(0)
         GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
-
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.tex_coord_bo)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.vertex_bos[self.animation_state.next_frame])
+        GL.glEnableVertexAttribArray(1)
+        GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.uv_index_bo)
         GL.glEnableVertexAttribArray(2)
-        GL.glVertexAttribPointer(2, 2, GL.GL_FLOAT, False, 0, ctypes.c_void_p(0))
+        GL.glVertexAttribPointer(2, 2, GL.GL_FLOAT, False, 0, ctypes.c_void_p(self.num_vertices))
 
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.vertex_index_bo)
         GL.glDrawElements(GL.GL_TRIANGLES, len(self.vertex_indices), GL.GL_UNSIGNED_INT, None)
@@ -186,7 +205,7 @@ class MD2Object:
 ### Renderer
 ###############################
 
-def render(shape):
+def render(shape, delta):
     GL.glUseProgram(shape.shader)
     model_matrix = pyrr.Matrix44.from_scale((1/75, 1/75, 1/75)) * pyrr.Matrix44.from_x_rotation(90) * pyrr.Matrix44.from_z_rotation(90)
     view_matrix = pyrr.Matrix44.look_at((1, 1, 1), (0, 0, 0), (0, 1, 0))
@@ -195,7 +214,7 @@ def render(shape):
     mvp_loc = GL.glGetUniformLocation(shape.shader, 'mvp')
     GL.glUniformMatrix4fv(mvp_loc, 1, GL.GL_FALSE, mvp_matrix)
 
-    shape.render()
+    shape.render_and_animate(delta)
 
 ###############################
 ### MAIN
@@ -229,11 +248,15 @@ def main():
     #GL.glCullFace(GL.GL_BACK)
 
     print('everything ready to render. rendering...')
+    delta = 0
+    start_time = time.time()
     while not glfw.window_should_close(window):
         glfw.poll_events()
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
-        render(shape)
+        render(shape, delta)
         glfw.swap_buffers(window)
+        delta = time.time() - start_time
+        start_time = time.time()
 
     glfw.terminate()
 

@@ -1,6 +1,7 @@
 #version 330
 
 uniform mat4 mvp;
+uniform float interpolator;
 
 layout (location=0) in vec3 position;
 layout (location=1) in vec3 position1;
@@ -11,7 +12,8 @@ out vec2 tex_coord_interpolated;
 
 void main()
 {
-    gl_Position = mvp * vec4(position, 1.0);
+    vec3 real_position = mix(position, position1, interpolator);
+    gl_Position = mvp * vec4(real_position, 1.0);
     pixel_position = gl_Position.xyz;
     tex_coord_interpolated = tex_coord;
 }
