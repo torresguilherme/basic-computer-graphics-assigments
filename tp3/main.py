@@ -7,6 +7,7 @@ import pathlib
 import struct
 import ctypes
 import time
+import argparse
 from PIL import Image
 
 WIDTH = 1280
@@ -22,6 +23,7 @@ class AnimationState:
         start_frame,
         end_frame,
         fps,
+        name,
         curr_time,
         old_time,
         interpol,
@@ -31,28 +33,30 @@ class AnimationState:
         self.start_frame = start_frame
         self.end_frame = end_frame
         self.fps = fps
+        self.name = name
 
         self.curr_time = curr_time
         self.old_time = old_time
         self.interpol = interpol
 
-        self.type = anim_type
+        self.index = anim_type
         
         self.curr_frame = curr_frame
         self.next_frame = next_frame
 
 class Animation:
-    def __init__(self, first_frame, last_frame, fps):
+    def __init__(self, first_frame, last_frame, fps, name):
         self.first_frame = first_frame
         self.last_frame = last_frame
         self.fps = fps
+        self.name = name
 
 ###############################
 ### MD2 importing
 ###############################
 
 class MD2Object:
-    def __init__(self, filename, texture_file, shader):
+    def __init__(self, filename, shader, texture_file=None, animation_file=None):
         self.shader = shader
         with open(filename, 'rb') as f:
             ### READING HEADER
@@ -149,24 +153,34 @@ class MD2Object:
         GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, len(indices) * 4, indices, GL.GL_STATIC_DRAW)
 
         # load texture and make buffer
-        texture = Image.open(texture_file).convert('RGBA').transpose(Image.FLIP_TOP_BOTTOM)
-        ix, iy, image = texture.size[0], texture.size[1], np.frombuffer(texture.tobytes('raw', 'RGBA'), dtype=np.uint8)
-        self.texture_buffer = GL.glGenTextures(1)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_buffer)
-        GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT,1)
-        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, ix, iy, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, image)
-        GL.glTexParameterf(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
-        GL.glTexParameterf(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
+        if texture_file:
+            texture = Image.open(texture_file).convert('RGBA').transpose(Image.FLIP_TOP_BOTTOM)
+            ix, iy, image = texture.size[0], texture.size[1], np.frombuffer(texture.tobytes('raw', 'RGBA'), dtype=np.uint8)
+            self.texture_buffer = GL.glGenTextures(1)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self.texture_buffer)
+            GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT,1)
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, ix, iy, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, image)
+            GL.glTexParameterf(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
+            GL.glTexParameterf(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
 
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
 
         # animation
-        self.animation = [Animation(0, self.num_frames-1, 5)]
+        if not animation_file:
+            self.animation = [Animation(0, self.num_frames-1, 5, 'all')]
+        else:
+            with open(animation_file, 'r') as f:
+                self.animation = []
+                for line in f.readlines():
+                    line = line.split()
+                    self.animation.append(Animation(int(line[1]), int(line[2]), int(line[3]), line[0]))
         self.animation_state = AnimationState(
-            self.animation[0].first_frame, self.animation[0].last_frame, self.animation[0].fps,
+            self.animation[0].first_frame, self.animation[0].last_frame, self.animation[0].fps, self.animation[0].name,
             0, 0, 0, 0,
             self.animation[0].first_frame, self.animation[0].first_frame + 1)
+        print('executing animation: ' + self.animation_state.name)
+
     
     def render_and_animate(self, delta):
         self.animation_state.old_time = self.animation_state.curr_time
@@ -175,8 +189,14 @@ class MD2Object:
             self.animation_state.curr_frame += 1
             self.animation_state.next_frame += 1
             if self.animation_state.next_frame > self.animation_state.end_frame:
-                self.animation_state.curr_frame = self.animation_state.start_frame
-                self.animation_state.next_frame = self.animation_state.start_frame + 1
+                # if animation ends, go on to the next
+                new_index = self.animation_state.index + 1
+                new_index %= len(self.animation)
+                self.animation_state = AnimationState(
+                    self.animation[new_index].first_frame, self.animation[new_index].last_frame, self.animation[new_index].fps, self.animation[new_index].name,
+                    0, 0, 0, new_index,
+                    self.animation[new_index].first_frame, self.animation[new_index].first_frame + 1)
+                print('executing animation: ' + self.animation_state.name)
             self.animation_state.curr_time = 0
     
         # interpolation
@@ -221,6 +241,12 @@ def render(shape, delta):
 ###############################
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('md2_file', type=str, help='Arquivo MD2')
+    parser.add_argument('--tex', type=str, help='Imagem de textura')
+    parser.add_argument('--anim', type=str, help='Arquivo contendo os índices das animações')
+    args = parser.parse_args()
+
     print('initializing glfw')
     if not glfw.init():
         return
@@ -241,13 +267,12 @@ def main():
     shader = shaders.compileProgram(shaders.compileShader(vertex_shader, GL.GL_VERTEX_SHADER), shaders.compileShader(fragment_shader, GL.GL_FRAGMENT_SHADER))
 
     print('reading object')
-    shape = MD2Object('models/dragon.md2', 'models/dragon.png', shader)
+    shape = MD2Object(args.md2_file, shader, texture_file=args.tex, animation_file=args.anim)
 
     GL.glClearColor(0.2, 0.2, 0.2, 1.0)
     GL.glEnable(GL.GL_DEPTH_TEST)
     #GL.glCullFace(GL.GL_BACK)
 
-    print('everything ready to render. rendering...')
     delta = 0
     start_time = time.time()
     while not glfw.window_should_close(window):
